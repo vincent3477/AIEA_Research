@@ -10,19 +10,29 @@ completion = client.chat.completions.create(
     messages=[
         {"role": "system", "content": "You are a helpful assistant that can help with anything."},
         #{"role": "user", "content": input_prompt},
-        {"role": "user", "content": f"Translate the following input into Prolog code. Give code only. Here is the following input to be translated: {input_prompt}"}
+        {"role": "user", "content": f"Translate the following input into Prolog code. The last line should be in the form of 'rule(object)' and nothing else. Ensure the proofs are thorough going through step by step before arriving to the conclusion. Give code only. Here is the following input to be translated: {input_prompt}"}
     ],
     logprobs=True
 )
 
 
 pl_output = completion.choices[0].message.content
-fileName = "generated_pl_code5.pl"
+
+fileName = "generated_pl_code7.pl"
 
 with open(fileName, "a") as file:
     file.write(pl_output[9:len(pl_output)-3]) #strip the headers.
 
 janus.consult(fileName)
 
-print("If you DO NOT see any errors, that means the prolog file was able to compile successfully. Program finished.")
+last_line = ""
+with open(fileName, "r") as file:
+    lines = file.readlines()
+    if lines != "":
+        last_line = lines[-1].rstrip('\n')
+
+print(last_line)
+ 
+result = janus.query_once(last_line)
+print(result)
 
