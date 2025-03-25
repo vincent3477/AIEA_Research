@@ -117,10 +117,10 @@ class KB:
 
 if __name__ == "__main__":
     mykb = KB()
-    #mykb.make_verbose()
+    mykb.make_verbose()
     mykb.make_new_one_way_relation("Parent", "Alice", "Tom")
     mykb.make_new_one_way_relation("Parent", "Tom", "Charlie")
-    mykb.make_new_rule("AND",[("ONE_WAY", "Parent", "x", "z"),("ONE_WAY","Parent", "z", "y")], ("ONE_WAY", "Ancestor", "x", "y")) #sub should have x = Alice, z = Tom, y = Charlie
+    mykb.make_new_rule("AND",[("ONE_WAY", "Parent", "x", "z"),("ONE_WAY","Ancestor", "z", "y")], ("ONE_WAY", "Ancestor", "x", "y")) #sub should have x = Alice, z = Tom, y = Charlie
     mykb.make_new_rule("AND",[("ONE_WAY", "Parent", "x", "y")], ("ONE_WAY", "Ancestor", "x", "y"))
 
     myfacts, myrules = mykb.get_mykb()

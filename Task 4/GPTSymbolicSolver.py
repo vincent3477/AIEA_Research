@@ -3,6 +3,8 @@ import janus_swi as janus
 client = OpenAI()
 
 input_prompt = input("Type in your problem here: ")
+file_prompt  = input("Where do you want to save the file?")
+fileName = file_prompt + ".pl"
 
 
 completion = client.chat.completions.create(
@@ -17,8 +19,6 @@ completion = client.chat.completions.create(
 
 
 pl_output = completion.choices[0].message.content
-
-fileName = "generated_pl_code7.pl"
 
 with open(fileName, "a") as file:
     file.write(pl_output[9:len(pl_output)-3]) #strip the headers.
