@@ -19,6 +19,8 @@ user_profile = client.chat.completions.create(
 # User profile agent: should capture how the user interacts with search results includi
 
 #from agents import Agent, Runner
+
+from openai import OpenAI
 import requests
 from bs4 import BeautifulSoup
 import re
@@ -29,40 +31,11 @@ import numpy as np
 
 memory = {} # use this as a form of memory for now
 passages = {}
-"""
-
-def fetch_documents(query):
-    url = "https://html.duckduckgo.com/html"
-    params = {'q':query}
-    headers={
-        "User-Agent":"Mozilla/5.0"
-    }
-    response = requests.post(url, data=params,headers=headers)
-    print(response)
-    soup = BeautifulSoup(response.text, "html.parser")
-    #print(response.text)
-    results = []
-    for link in soup.select('.result__a'):
-        print(link)
-        title = link.get_text()
-        href = link['href']
-        results.append((title,href))
-    return results
-
-search_results = fetch_documents("why are computers good")
-print(search_results)
 
 
-
-
-"""
-
-
-# example: major SF stations
-topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41"]
-def safe_wikipedia_summary(query, sentences=5):
+def get_wikipedia_summary(topic, sentences=5):
     try:
-        return wikipedia.summary(query, sentences=sentences)
+        return wikipedia.summary(topic, sentences=sentences)
     except wikipedia.DisambiguationError as e:
         # Use the first suggested option
         print(wikipedia.summary(e.options[0], sentences=sentences))
@@ -72,49 +45,72 @@ def safe_wikipedia_summary(query, sentences=5):
         #    return wikipedia.summary(e.options[i], sentences=sentences)
         
     except wikipedia.PageError:
-        print(f"[!] No Wikipedia page found for '{query}'")
         return None
     
-summary_list = []
-    
-for i in range(0,len(topics)):
-    summary = safe_wikipedia_summary(topics[i])
-    if isinstance(summary, str):
 
-        summary_list.append(summary)
-        print(f"Topic {topics[i]}: {summary}")
+
+
+def get_top_k_articles(test, num_articles):
+
+    topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41"]
+
+    summary_list = []
+    
+    for i in range(0,len(topics)):
+        summary = get_wikipedia_summary(topics[i])
+        if isinstance(summary, str):
+            summary_list.append(summary)
+            print(f"Topic {topics[i]}: {summary}")
+            print("\n\n\n")
+
+
+    index = faiss.IndexFlat(384)
+
+    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    embeddings = model.encode(summary_list)
+    index.add(embeddings)
+    input_embedding = model.encode(test)
+
+
+    D, I = index.search(np.array([input_embedding]), k = num_articles)
+
+
+    print("Top-5 distances:", D)
+    print("Top-5 indices:", I)
+
+    # get the query
+    # vectorize the query
+    # then we find the similarities between the query and the vectorized articles, either with the use of cosine similarities.
+    
+    best_ranked_articles = []
+
+    print("The best matching results. First is highest match and last is the lowest match.")
+    for i in I[0]:
+        print(summary_list[i])
         print("\n\n\n")
+        best_ranked_articles.append(summary_list[i])
+    return best_ranked_articles
 
 
-    
-print("_____________________________________")
-print(summary_list)
+
+# get the user input
+test = input("what is your query")
+articles = get_top_k_articles(test, 5)
+
+client = OpenAI()
+
+user_profile = client.chat.completions.create(
+    model = "gpt-4o-mini",
+    messages=[
+        {"role": "system", "content": f"You are a search technology export guidiing the contextual retrieval agent to deliver context-aware document retrieval." },
+        {"role": "user", "content": f""}
+    ]
+)
+
+reply = user_profile.choices[0].message.content
+print(reply)
 
 
-index = faiss.IndexFlat(384)
-
-model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-embeddings = model.encode(summary_list)
-print(embeddings)
-index.add(embeddings)
-
-test = input("what is your query?")
-input_embedding = model.encode(test)
-
-
-D, I = index.search(np.array([input_embedding]), k = 5)
-
-
-print("Top-5 distances:", D)
-print("Top-5 indices:", I)
-
-# get the query
-# vectorize the query
-# then we find the similarities between the query and the vectorized articles, either with the use of cosine similarities.
-print("The best matching results. First is highest match and last is the lowest match.")
-for i in I[0]:
-    print(summary_list[i])
-    print("\n\n\n")
 
 
 
