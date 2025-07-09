@@ -18,19 +18,13 @@ user_profile = client.chat.completions.create(
 
 # User profile agent: should capture how the user interacts with search results includi
 
-#from agents import Agent, Runner
-
+from agents import Agent, Runner
 from openai import OpenAI
-import requests
-from bs4 import BeautifulSoup
-import re
 import wikipedia
 import faiss
 from sentence_transformers import SentenceTransformer
 import numpy as np
 
-memory = {} # use this as a form of memory for now
-passages = {}
 
 
 def get_wikipedia_summary(topic, sentences=5):
@@ -38,7 +32,7 @@ def get_wikipedia_summary(topic, sentences=5):
         return wikipedia.summary(topic, sentences=sentences)
     except wikipedia.DisambiguationError as e:
         # Use the first suggested option
-        print(wikipedia.summary(e.options[0], sentences=sentences))
+        return wikipedia.summary(e.options[0], sentences=sentences)
 
         #for i in range(0, len(e.options)):
         #    print(wikipedia.summary(e.options[i], sentences=sentences))
@@ -60,8 +54,8 @@ def get_top_k_articles(test, num_articles):
         summary = get_wikipedia_summary(topics[i])
         if isinstance(summary, str):
             summary_list.append(summary)
-            print(f"Topic {topics[i]}: {summary}")
-            print("\n\n\n")
+            #print(f"Topic {topics[i]}: {summary}")
+            #print("\n\n\n")
 
 
     index = faiss.IndexFlat(384)
@@ -86,36 +80,69 @@ def get_top_k_articles(test, num_articles):
 
     print("The best matching results. First is highest match and last is the lowest match.")
     for i in I[0]:
-        print(summary_list[i])
-        print("\n\n\n")
+        #print(summary_list[i])
+        #print("\n\n\n")
         best_ranked_articles.append(summary_list[i])
     return best_ranked_articles
 
 
 
-# get the user input
-test = input("what is your query")
-articles = get_top_k_articles(test, 5)
+# initialize all the agents
 
 client = OpenAI()
 
-user_profile = client.chat.completions.create(
-    model = "gpt-4o-mini",
-    messages=[
-        {"role": "system", "content": f"You are a search technology export guidiing the contextual retrieval agent to deliver context-aware document retrieval." },
-        {"role": "user", "content": f""}
-    ]
-)
+# Serves as a hub for interagent communication
+glob_message_pool = Agent(name = "Global Message Pool", instructions="You are responsible for maintaining and enriching the Global Message Pool, serving as a central hub for inter-agent communication. Using the responses from individual agents \
+                        and the existing global memory, consolidate key insights into a shared repository. Your goal is to organize a comprehensive message pool that includes agent-specific findings, historical user preferences, session-specific behaviors, search \
+                        queries, and user feedback. This structure should provide all agents with meaningful data points and strategic recommendations, reducing redundant communication and improving the system's overall efficiency.")
 
-reply = user_profile.choices[0].message.content
-print(reply)
+# Responsible for retrieving the top relevant documents based on user needs and interests
+cont_retr_agent = Agent(name="Contextual Retrieval Agent", instructions = "You are a search technology expert guiding the Contextual Retrieval Agent to deliver context-aware document retrieval. Using the global memory pool and the retrieved passages, \
+                        identify strategies to refine document retrieval. Highlight how user preferences, immediate needs, and global insights can be leveraged to adjust search queries and prioritize results that align with the user's interests. Ensure the Contextual \
+                        Retrieval Agent uses this shared information to deliver more relevant and valuable results.")
+
+# Responsible for adjusting search results real time to best suite what the user is looking for right now.
+live_sess_agent = Agent(name = "Live Session Agent", instructions = "Your expertise in session analysis is required to assist the Live Session Agent in dynamically adjusting results. Examine the retrieved passages and information in the global memory pool. \
+                        Determine how the Live Session Agent can use this data to refine its understanding of the user's immediate needs. Suggest ways to dynamically adjust search results or recommend new queries in real-time, ensuring that session adjustments align with user \
+                        preferences and goals.")
+
+# Responsible for priortizing documents to match the context.
+doc_rank_agent = Agent(name = "Document Ranking Agent", instructions="Your task is to help the prioritize documents for better ranking. Analyze the retrieved passages and global memory pool to identify ways to rank documents effectively. Focus on combining \
+                       historical user preferences, immediate needs, and session behavior to refine ranking algorithms. Your insights should ensure that documents presented by the Document Ranking Agent are prioritized to match user interests and search context.")
 
 
+user_prof_agent = Agent(name = "User Profile Agent", instructions="Your task is to help the User Profile Agent improve its understanding of user preferences based on ranked document lists and the shared global memory pool. From the provided passages and global \
+                        memory pool, analyze clues about the user's search preferences. Look for themes, types of documents, and navigation behaviors that reveal user interest. Use these insights to recommend how the User Profile Agent can refine and expand the \
+                        user profile to deliver better-personalized results.")
 
 
+generation_agent = Agent(name = "Generation Agent", instructions="Your responsbility is to generate a detailed output based on the information given.")
+
+# First we have the user profile agent that retrives that current user profile
 
 
+while True:
+    query = input("what is your query? \n")
+    articles = get_top_k_articles(query, 5)
+
+    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: "")"
+
+    # Update the user profile
+    profile_agent_output = Runner.run_sync(user_prof_agent, inputs)
+    print("AGENT OUTPUT", profile_agent_output.final_output)
+    # then pipe it into the the global message pool
+    new_gmp = Runner.run_sync(user_prof_agent, profile_agent_output.final_output)
+    print
+
+    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {new_gmp.final_output})"
+    print("inputs", inputs)
+    article_output = Runner.run_sync(cont_retr_agent, inputs)
 
 
+    inputs = f"(Question: {query}, Passages: {article_output.final_output}, Global Memory: {new_gmp})"
+    print("inputs final out",inputs)
+    result = Runner.run_sync(generation_agent, inputs)
+
+    print(result.final_output)
 
 
