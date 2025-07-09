@@ -46,7 +46,7 @@ def get_wikipedia_summary(topic, sentences=5):
 
 def get_top_k_articles(test, num_articles):
 
-    topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41"]
+    topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41, Yerba Buena/Moscone", "Castro", "Van Ness", "Forest Hill", "Chinatown"]
 
     summary_list = []
     
@@ -94,7 +94,9 @@ client = OpenAI()
 # Serves as a hub for interagent communication
 glob_message_pool = Agent(name = "Global Message Pool", instructions="You are responsible for maintaining and enriching the Global Message Pool, serving as a central hub for inter-agent communication. Using the responses from individual agents \
                         and the existing global memory, consolidate key insights into a shared repository. Your goal is to organize a comprehensive message pool that includes agent-specific findings, historical user preferences, session-specific behaviors, search \
-                        queries, and user feedback. This structure should provide all agents with meaningful data points and strategic recommendations, reducing redundant communication and improving the system's overall efficiency.")
+                        queries, and user feedback. This structure should provide all agents with meaningful data points and strategic recommendations, reducing redundant communication and improving the system's overall efficiency. Your response must only include\
+                          the message pool in the form of a python dictionary in the following manner: {agent specific findings: (put findings here), historical user preferences: (user preferences here), session-specific behaviors: (put any sort of behaviors here), queries: (past and current queries)}.\
+                          Do not include anything else other than the message pool. If there are no findings yet for any of the fields in the message pool, put 'Nothing' in the field.")
 
 # Responsible for retrieving the top relevant documents based on user needs and interests
 cont_retr_agent = Agent(name="Contextual Retrieval Agent", instructions = "You are a search technology expert guiding the Contextual Retrieval Agent to deliver context-aware document retrieval. Using the global memory pool and the retrieved passages, \
@@ -113,33 +115,41 @@ doc_rank_agent = Agent(name = "Document Ranking Agent", instructions="Your task 
 
 user_prof_agent = Agent(name = "User Profile Agent", instructions="Your task is to help the User Profile Agent improve its understanding of user preferences based on ranked document lists and the shared global memory pool. From the provided passages and global \
                         memory pool, analyze clues about the user's search preferences. Look for themes, types of documents, and navigation behaviors that reveal user interest. Use these insights to recommend how the User Profile Agent can refine and expand the \
-                        user profile to deliver better-personalized results.")
+                        user profile to deliver better-personalized results. If the global memory is empty, meaning a new profile was just made, output 'Nothing'.")
 
 
 generation_agent = Agent(name = "Generation Agent", instructions="Your responsbility is to generate a detailed output based on the information given.")
 
 # First we have the user profile agent that retrives that current user profile
 
+query = ""
+articles = ""
+
+inputs = f"(Question: {query}, Passages: {articles}, Global Memory: (empty))"
 
 while True:
     query = input("what is your query? \n")
     articles = get_top_k_articles(query, 5)
 
-    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: "")"
-
     # Update the user profile
     profile_agent_output = Runner.run_sync(user_prof_agent, inputs)
-    print("AGENT OUTPUT", profile_agent_output.final_output)
+    print("USER PROFILE AGENT FINDINGS", profile_agent_output.final_output)
+
     # then pipe it into the the global message pool
-    new_gmp = Runner.run_sync(user_prof_agent, profile_agent_output.final_output)
-    print
+    new_gmp = Runner.run_sync(glob_message_pool, profile_agent_output.final_output)
+    new_global_message_pool = new_gmp.final_output
 
-    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {new_gmp.final_output})"
+    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {new_global_message_pool})"
     print("inputs", inputs)
+
+    # Retrieve the best of the top k-articles
     article_output = Runner.run_sync(cont_retr_agent, inputs)
+    inputs = f"(Question: {query}, Passages: {article_output.final_output}, Global Memory: {new_global_message_pool})"
 
+    # Re-rank the articles.
+    ranked_article_output  = Runner.run_sync(doc_rank_agent, inputs)
+    inputs = f"(Question: {query}, Passages: {ranked_article_output.final_output}, Global Memory: {new_global_message_pool})"
 
-    inputs = f"(Question: {query}, Passages: {article_output.final_output}, Global Memory: {new_gmp})"
     print("inputs final out",inputs)
     result = Runner.run_sync(generation_agent, inputs)
 
