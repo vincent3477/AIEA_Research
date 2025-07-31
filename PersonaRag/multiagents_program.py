@@ -1,23 +1,3 @@
-"""from openai import OpenAI
-client = OpenAI()
-
-query = input("type in your query here")
-
-# scrape for documents here
-
-memory = {}
-
-user_profile = client.chat.completions.create(
-    model = "gpt-4o-muni",
-    messages=[
-        {"role": "system", "content": f"From the memory pool get a gist of what his personality may be like including previous queries, main interests, and immediate needs that are most common." },
-        {"role": "user", "content": f"Based on this knowledge base, describe this person's main interests filter his main interest based on the queries made. This is the person's knowledge base {memory}"}
-    ]
-)
-"""
-
-# User profile agent: should capture how the user interacts with search results includi
-
 from agents import Agent, Runner
 from openai import OpenAI
 import wikipedia
@@ -87,16 +67,21 @@ def get_top_k_articles(test, num_articles):
 
 
 
+
+gmp_format = "User Profile Agent: {user_profile_answer}, Contextual Retrieval Agent: {contextual_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
+
+
+
 # initialize all the agents
 
 client = OpenAI()
 
 # Serves as a hub for interagent communication
-glob_message_pool = Agent(name = "Global Message Pool", instructions="You are responsible for maintaining and enriching the Global Message Pool, serving as a central hub for inter-agent communication. Using the responses from individual agents \
+glob_message_pool = Agent(name = "Global Message Pool", instructions=f"You are responsible for maintaining and enriching the Global Message Pool, serving as a central hub for inter-agent communication. Using the responses from individual agents \
                         and the existing global memory, consolidate key insights into a shared repository. Your goal is to organize a comprehensive message pool that includes agent-specific findings, historical user preferences, session-specific behaviors, search \
                         queries, and user feedback. This structure should provide all agents with meaningful data points and strategic recommendations, reducing redundant communication and improving the system's overall efficiency. Your response must only include\
-                          the message pool in the form of a python dictionary in the following manner: {agent specific findings: (put findings here), historical user preferences: (user preferences here), session-specific behaviors: (put any sort of behaviors here), queries: (past and current queries)}.\
-                          Do not include anything else other than the message pool. If there are no findings yet for any of the fields in the message pool, put 'Nothing' in the field.")
+                          the message pool in the form of a python dictionary in the following manner: (agent specific findings: {gmp_format}, query: (current query), passages: (passages as retrieved)).\
+                          Do not include anything else other than the message pool. If there are no findings yet for any of the agent specific findings fields in the message pool, put 'Nothing' in the field.")
 
 # Responsible for retrieving the top relevant documents based on user needs and interests
 cont_retr_agent = Agent(name="Contextual Retrieval Agent", instructions = "You are a search technology expert guiding the Contextual Retrieval Agent to deliver context-aware document retrieval. Using the global memory pool and the retrieved passages, \
@@ -118,41 +103,54 @@ user_prof_agent = Agent(name = "User Profile Agent", instructions="Your task is 
                         user profile to deliver better-personalized results. If the global memory is empty, meaning a new profile was just made, output 'Nothing'.")
 
 
-generation_agent = Agent(name = "Generation Agent", instructions="Your responsbility is to generate a detailed output based on the information given.")
+cog_agent = Agent(name = "Cognitive Agent", instructions="Your responsbility is to help the cognitiive agent to enahance its understanding of user insights to continuous improve the system's response")
+
+chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve the problem, please think and reason step by step, then answer.")
+
+
 
 # First we have the user profile agent that retrives that current user profile
 
-query = ""
-articles = ""
 
-inputs = f"(Question: {query}, Passages: {articles}, Global Memory: (empty))"
 
 while True:
     query = input("what is your query? \n")
     articles = get_top_k_articles(query, 5)
+    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {gmp_format})"
+
 
     # Update the user profile
-    profile_agent_output = Runner.run_sync(user_prof_agent, inputs)
-    print("USER PROFILE AGENT FINDINGS", profile_agent_output.final_output)
+    profile_agent_output = Runner.run_sync(user_prof_agent, inputs).final_output
 
     # then pipe it into the the global message pool
-    new_gmp = Runner.run_sync(glob_message_pool, profile_agent_output.final_output)
-    new_global_message_pool = new_gmp.final_output
-
-    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {new_global_message_pool})"
-    print("inputs", inputs)
+    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the user profile agent {profile_agent_output}").final_output
+    print("FIRST TIME UPDATING THE GMP", new_gmp)
 
     # Retrieve the best of the top k-articles
-    article_output = Runner.run_sync(cont_retr_agent, inputs)
-    inputs = f"(Question: {query}, Passages: {article_output.final_output}, Global Memory: {new_global_message_pool})"
+    article_output = Runner.run_sync(cont_retr_agent, new_gmp).final_output
+
+    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the context retrieval agent {article_output}").final_output
 
     # Re-rank the articles.
-    ranked_article_output  = Runner.run_sync(doc_rank_agent, inputs)
-    inputs = f"(Question: {query}, Passages: {ranked_article_output.final_output}, Global Memory: {new_global_message_pool})"
+    ranked_article_output  = Runner.run_sync(doc_rank_agent, inputs).final_output
+    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
 
-    print("inputs final out",inputs)
-    result = Runner.run_sync(generation_agent, inputs)
 
-    print(result.final_output)
+    cot_prompt = f"Question: {query}, Passages: {ranked_article_output}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, directly provide the answer without considering the passages."
+
+    cot_answer = Runner.run_sync(chain_of_thought, cot_prompt).final_output
+
+    cot_gmp = f"(Question: {query}, Passages: {articles}, Global Memory: {new_gmp}, Initial Answer: {cot_answer})"
+
+
+    print(cot_gmp)
+
+    user_insights = Runner.run_sync(cog_agent, cot_gmp).final_output
+
+
+
+
+
+    print(user_insights)
 
 
