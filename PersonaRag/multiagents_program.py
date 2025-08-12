@@ -1,12 +1,15 @@
 from agents import Agent, Runner
 from openai import OpenAI
 import wikipedia
-import faiss
+from doc_retr_agent import k_doc_retriever
 from sentence_transformers import SentenceTransformer
 import numpy as np
+import re
+import faiss
 
-
-
+#index = None
+#model = None
+"""
 def get_wikipedia_summary(topic, sentences=5):
     try:
         return wikipedia.summary(topic, sentences=sentences)
@@ -22,9 +25,9 @@ def get_wikipedia_summary(topic, sentences=5):
         return None
     
 
-
-
 def get_top_k_articles(test, num_articles):
+
+    
 
     topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41, Yerba Buena/Moscone", "Castro", "Van Ness", "Forest Hill", "Chinatown"]
 
@@ -65,7 +68,10 @@ def get_top_k_articles(test, num_articles):
         best_ranked_articles.append(summary_list[i])
     return best_ranked_articles
 
+"""
 
+doc_retriever = k_doc_retriever(SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), faiss.IndexFlat(384))
+doc_retriever.embed_documents("corpus.txt")
 
 
 gmp_format = "User Profile Agent: {user_profile_answer}, Contextual Retrieval Agent: {contextual_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
@@ -114,8 +120,10 @@ chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve
 
 
 while True:
+    embed_articles()
+
     query = input("what is your query? \n")
-    articles = get_top_k_articles(query, 5)
+    articles = get_top_k(query, 20)
     inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {gmp_format})"
 
 
@@ -152,5 +160,7 @@ while True:
 
 
     print(user_insights)
+
+
 
 
