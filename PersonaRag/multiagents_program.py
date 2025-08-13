@@ -9,69 +9,21 @@ import faiss
 
 #index = None
 #model = None
-"""
-def get_wikipedia_summary(topic, sentences=5):
-    try:
-        return wikipedia.summary(topic, sentences=sentences)
-    except wikipedia.DisambiguationError as e:
-        # Use the first suggested option
-        return wikipedia.summary(e.options[0], sentences=sentences)
-
-        #for i in range(0, len(e.options)):
-        #    print(wikipedia.summary(e.options[i], sentences=sentences))
-        #    return wikipedia.summary(e.options[i], sentences=sentences)
-        
-    except wikipedia.PageError:
-        return None
-    
-
-def get_top_k_articles(test, num_articles):
-
-    
-
-    topics = ["4th & King", "Balboa Park", "Embarcadero", "Civic Center", "Ferry Building", "Powell", "West Portal", "Pier 41, Yerba Buena/Moscone", "Castro", "Van Ness", "Forest Hill", "Chinatown"]
-
-    summary_list = []
-    
-    for i in range(0,len(topics)):
-        summary = get_wikipedia_summary(topics[i])
-        if isinstance(summary, str):
-            summary_list.append(summary)
-            #print(f"Topic {topics[i]}: {summary}")
-            #print("\n\n\n")
 
 
-    index = faiss.IndexFlat(384)
+def get_articles_by_index(article_dict, list_articles):
 
-    model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-    embeddings = model.encode(summary_list)
-    index.add(embeddings)
-    input_embedding = model.encode(test)
+    exp = re.compile("(\d+)")
+    indexed_list = exp.findall(list_articles)
 
+    return_vals = {}
+    for l in indexed_list:
+        return_vals[int(l)] = article_dict[int(l)]
+    return return_vals
 
-    D, I = index.search(np.array([input_embedding]), k = num_articles)
-
-
-    print("Top-5 distances:", D)
-    print("Top-5 indices:", I)
-
-    # get the query
-    # vectorize the query
-    # then we find the similarities between the query and the vectorized articles, either with the use of cosine similarities.
-    
-    best_ranked_articles = []
-
-    print("The best matching results. First is highest match and last is the lowest match.")
-    for i in I[0]:
-        #print(summary_list[i])
-        #print("\n\n\n")
-        best_ranked_articles.append(summary_list[i])
-    return best_ranked_articles
-
-"""
-
-doc_retriever = k_doc_retriever(SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), faiss.IndexFlat(384))
-doc_retriever.embed_documents("corpus.txt")
+# initialize the vector db of articles.
+doc_retriever = k_doc_retriever(SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), faiss.IndexFlat(384), 'corpus.tsv')
+doc_retriever.embed_documents()
 
 
 gmp_format = "User Profile Agent: {user_profile_answer}, Contextual Retrieval Agent: {contextual_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
@@ -120,40 +72,52 @@ chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve
 
 
 while True:
-    embed_articles()
 
     query = input("what is your query? \n")
-    articles = get_top_k(query, 20)
+    articles = doc_retriever.embed_query(query, 20)
     inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {gmp_format})"
 
 
     # Update the user profile
-    profile_agent_output = Runner.run_sync(user_prof_agent, inputs).final_output
+    profile_agent_output = Runner.run_sync(user_prof_agent, f"Update the user profile based on the query given in the message pool{inputs}").final_output
 
     # then pipe it into the the global message pool
     new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the user profile agent {profile_agent_output}").final_output
     print("FIRST TIME UPDATING THE GMP", new_gmp)
 
-    # Retrieve the best of the top k-articles
-    article_output = Runner.run_sync(cont_retr_agent, new_gmp).final_output
+    # With the articles, given priortize the most relevant articles
+    cont_retr_output = Runner.run_sync(cont_retr_agent, f"As said in the instructions above, priortize the most relevant articles as given here {articles}. Just list the passage IDs that are best relevant in form of a Python list: {new_gmp}").final_output
+    print("agent's article output", cont_retr_output)
+    # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
 
-    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the context retrieval agent {article_output}").final_output
+
+    cont_retr_articles = get_articles_by_index(articles, cont_retr_output)
+ 
+
+    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\" field with new information from the context retrieval agent {cont_retr_articles}").final_output
+
+
+    lve_ses_suggestions = Runner.run_sync(live_sess_agent, f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {new_gmp}").final_output
+
+    new_gmp = Runner.run_sync(glob_message_pool, f"Update the gloval message pool with new information from the live session agent {lve_ses_suggestions}").final_output
+
 
     # Re-rank the articles.
-    ranked_article_output  = Runner.run_sync(doc_rank_agent, inputs).final_output
+    ranked_article_output  = Runner.run_sync(doc_rank_agent, f"Rank the documents in the current field \"passages\" {new_gmp}").final_output
     new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
+    print("reranked articles", new_gmp)
 
 
     cot_prompt = f"Question: {query}, Passages: {ranked_article_output}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, directly provide the answer without considering the passages."
 
     cot_answer = Runner.run_sync(chain_of_thought, cot_prompt).final_output
+    
 
     cot_gmp = f"(Question: {query}, Passages: {articles}, Global Memory: {new_gmp}, Initial Answer: {cot_answer})"
-
-
-    print(cot_gmp)
+    print("chain of thought output", cot_gmp)
 
     user_insights = Runner.run_sync(cog_agent, cot_gmp).final_output
+    print("udpated user insights", user_insights)
 
 
 
