@@ -6,6 +6,7 @@ from sentence_transformers import SentenceTransformer
 import numpy as np
 import re
 import faiss
+from ast import literal_eval
 
 #index = None
 #model = None
@@ -26,7 +27,7 @@ doc_retriever = k_doc_retriever(SentenceTransformer('sentence-transformers/all-M
 doc_retriever.embed_documents()
 
 
-gmp_format = "User Profile Agent: {user_profile_answer}, Contextual Retrieval Agent: {contextual_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
+gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
 
 
 
@@ -75,31 +76,39 @@ while True:
 
     query = input("what is your query? \n")
     articles = doc_retriever.embed_query(query, 20)
-    inputs = f"(Question: {query}, Passages: {articles}, Global Memory: {gmp_format})"
+    global_message_pool = {}
+    global_message_pool["Query"] = query
+    global_message_pool["Passages"] = articles
+    global_message_pool["Global Memory"] = gmp_format
+    str_glob_mess_pool = str(global_message_pool)
 
 
     # Update the user profile
-    profile_agent_output = Runner.run_sync(user_prof_agent, f"Update the user profile based on the query given in the message pool{inputs}").final_output
+    profile_agent_output = Runner.run_sync(user_prof_agent, f"Update the user profile based on the query given in the message pool{global_message_pool}").final_output
 
-    # then pipe it into the the global message pool
-    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the user profile agent {profile_agent_output}").final_output
-    print("FIRST TIME UPDATING THE GMP", new_gmp)
+    # then pipe into the global message pool updating it
+    glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the user profile agent {profile_agent_output}").final_output
+    # Update the global message Pool
+    global_message_pool["Global Memory"] = glob_memory_state
+    print("GMP update #1", new_gmp)
 
-    # With the articles, given priortize the most relevant articles
-    cont_retr_output = Runner.run_sync(cont_retr_agent, f"As said in the instructions above, priortize the most relevant articles as given here {articles}. Just list the passage IDs that are best relevant in form of a Python list: {new_gmp}").final_output
+
+    # With the articles given priortize the most relevant articles
+    cont_retr_output = Runner.run_sync(cont_retr_agent, f"As said in the instructions above, priortize the most relevant articles given in the \"Passages\" field in here: {str(global_message_pool)}. Just list the passage IDs that are best relevant in form of a Python list.").final_output
     print("agent's article output", cont_retr_output)
     # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
 
 
     cont_retr_articles = get_articles_by_index(articles, cont_retr_output)
+    global_message_pool["Passages"] = cont_retr_articles
  
 
-    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\" field with new information from the context retrieval agent {cont_retr_articles}").final_output
+    #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\"  field with new information from the context retrieval agent {cont_retr_output}").final_output
 
 
-    lve_ses_suggestions = Runner.run_sync(live_sess_agent, f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {new_gmp}").final_output
+    lve_ses_suggestions = Runner.run_sync(live_sess_agent, f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {global_message_pool}").final_output
 
-    new_gmp = Runner.run_sync(glob_message_pool, f"Update the gloval message pool with new information from the live session agent {lve_ses_suggestions}").final_output
+    glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the gloval message pool with new information from the live session agent {lve_ses_suggestions}").final_output
 
 
     # Re-rank the articles.
