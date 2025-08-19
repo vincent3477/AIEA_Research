@@ -8,6 +8,7 @@ import re
 import faiss
 from ast import literal_eval
 
+
 #index = None
 #model = None
 
@@ -17,9 +18,14 @@ def get_articles_by_index(article_dict, list_articles):
     exp = re.compile("(\d+)")
     indexed_list = exp.findall(list_articles)
 
+    print(list_articles)
+
     return_vals = {}
     for l in indexed_list:
-        return_vals[int(l)] = article_dict[int(l)]
+        try:
+            return_vals[int(l)] = article_dict[int(l)]
+        except KeyError:
+            print(f"ID {l} was NOT found. This can can lead to potential information loss.")
     return return_vals
 
 # initialize the vector db of articles.
@@ -62,7 +68,7 @@ user_prof_agent = Agent(name = "User Profile Agent", instructions="Your task is 
                         user profile to deliver better-personalized results. If the global memory is empty, meaning a new profile was just made, output 'Nothing'.")
 
 
-cog_agent = Agent(name = "Cognitive Agent", instructions="Your responsbility is to help the cognitiive agent to enahance its understanding of user insights to continuous improve the system's response")
+cog_agent = Agent(name = "Cognitive Agent", instructions="Your responsbility is to help the cognitive agent to enahance its understanding of user insights to continuous improve the system's response")
 
 chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve the problem, please think and reason step by step, then answer.")
 
@@ -71,15 +77,17 @@ chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve
 # First we have the user profile agent that retrives that current user profile
 
 
+global_message_pool = {}
+global_message_pool["Global Memory"] = gmp_format
+init_glob_memory = False
 
 while True:
 
     query = input("what is your query? \n")
-    articles = doc_retriever.embed_query(query, 20)
-    global_message_pool = {}
+    articles = doc_retriever.embed_query(query, 10)
     global_message_pool["Query"] = query
     global_message_pool["Passages"] = articles
-    global_message_pool["Global Memory"] = gmp_format
+        
     str_glob_mess_pool = str(global_message_pool)
 
 
@@ -90,7 +98,7 @@ while True:
     glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the user profile agent {profile_agent_output}").final_output
     # Update the global message Pool
     global_message_pool["Global Memory"] = glob_memory_state
-    print("GMP update #1", new_gmp)
+    print("GMP update #1", glob_memory_state)
 
 
     # With the articles given priortize the most relevant articles
@@ -108,32 +116,43 @@ while True:
 
     lve_ses_suggestions = Runner.run_sync(live_sess_agent, f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {global_message_pool}").final_output
 
-    glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the gloval message pool with new information from the live session agent {lve_ses_suggestions}").final_output
+    glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the current global memory \"{glob_memory_state}\" with new information from the live session agent {lve_ses_suggestions}").final_output
+    print(glob_memory_state)
+    global_message_pool["Global Memory"] = glob_memory_state
 
 
     # Re-rank the articles.
-    ranked_article_output  = Runner.run_sync(doc_rank_agent, f"Rank the documents in the current field \"passages\" {new_gmp}").final_output
-    new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
-    print("reranked articles", new_gmp)
+    ranked_article_output  = Runner.run_sync(doc_rank_agent, f"Rerank the documents in the current field \"passages\. Simply give out the IDs of the passages. {global_message_pool}").final_output
+                                             
+    retr_ranked_articles = get_articles_by_index(articles, ranked_aricle_output)
+    del global_message_pool["Passages"]
+    global_message_pool["Passages ranked most relevant to least relevant"] = retr_ranked_articles
+
+    #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
+    
 
 
-    cot_prompt = f"Question: {query}, Passages: {ranked_article_output}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, directly provide the answer without considering the passages."
-
+    cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, directly provide the answer without considering the passages."
     cot_answer = Runner.run_sync(chain_of_thought, cot_prompt).final_output
     
 
-    cot_gmp = f"(Question: {query}, Passages: {articles}, Global Memory: {new_gmp}, Initial Answer: {cot_answer})"
-    print("chain of thought output", cot_gmp)
+    #cot_gmp = f"({global_message_pool}, Initial Answer: {cot_answer})"
+    #print("chain of thought output", cot_gmp)
 
-    user_insights = Runner.run_sync(cog_agent, cot_gmp).final_output
-    print("udpated user insights", user_insights)
+    cognitive_agent_prompt = f"Verify the reasoning process in the initial response shown here \"{cot_answer}\" for errors or misalignments. Use insights from user interaction analysis shown here \"{global_message_pool}\" to refine this response, correcting any inaccuracies and enhancing the query answers based on user profile. Ensure that your refined response aligns more closely with the user's immediate needs and incorporates foundational or advanced knowledge from other sources"
+
+    final_answer = Runner.run_sync(cog_agent, cognitive_agent_prompt)
+
+    profile_agent_output = Runner.run_sync(user_prof_agent, f"Update the user profile based on this past query{global_message_pool}").final_output
 
 
+    glob_memory_state = Runner.run_sync(glob_message_pool, f"Update the global memory with new information from the user profile agent {profile_agent_output}").final_output
+    global_message_pool["Global Memory"] = glob_memory_state
 
 
+    #print("udpated user insights", profile_agent_output)
 
-    print(user_insights)
-
+    print(final_answer)
 
 
 
