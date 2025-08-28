@@ -23,6 +23,18 @@ class persona_rag:
 
         client = OpenAI()
 
+        # initialize the vector db of articles.
+        self.doc_retriever = k_doc_retriever(model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), index_file = "wiki_articles_1.index", use_index_file=True)
+        self.doc_retriever.embed_documents()
+
+
+        self.gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
+
+
+        self.global_message_pool = {}
+        self.global_message_pool["Global Memory"] = self.gmp_format
+            
+
         # Serves as a hub for interagent communication
         self.glob_message_pool = Agent(name = "Global Message Pool", instructions=f"You are responsible for maintaining and enriching the Global Message Pool, serving as a central hub for inter-agent communication. Using the responses from individual agents \
                                 and the existing global memory, consolidate key insights into a shared repository. Your goal is to organize a comprehensive message pool that includes agent-specific findings, historical user preferences, session-specific behaviors, search \
@@ -54,17 +66,7 @@ class persona_rag:
 
         self.chain_of_thought = Agent(name = "Chain Of Thought Agent", instructions="To solve the problem, please think and reason step by step, then answer.")
 
-        # initialize the vector db of articles.
-        self.doc_retriever = k_doc_retriever(model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), index_file = "wiki_articles_1.index", use_index_file=True)
-        self.doc_retriever.embed_documents()
-
-
-        self.gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
-
-
-        self.global_message_pool = {}
-        self.global_message_pool["Global Memory"] = self.gmp_format
-            
+        
     
     def get_articles_by_index(article_dict, list_articles):
 
@@ -127,11 +129,16 @@ class persona_rag:
 
         
         #query = input("what is your query? \n")
+        print("somethjing ehre")
         articles = self.doc_retriever.embed_query(query, 10)
+        print("after embed query")
         self.global_message_pool["Query"] = query
+        print("after setting the gmp")
         self.global_message_pool["Passages"] = articles
             
         #str_glob_mess_pool = str(global_message_pool)
+
+        print("something wrong here")
 
 
         # Update the user profile
