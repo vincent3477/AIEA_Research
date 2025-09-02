@@ -9,6 +9,7 @@ import re
 import faiss
 from ast import literal_eval
 from transformers import pipeline
+from datasets import load_dataset
 
 
 
@@ -26,6 +27,9 @@ class persona_rag:
         # initialize the vector db of articles.
         self.doc_retriever = k_doc_retriever(model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), index_file = "wiki_articles_1.index", use_index_file=True)
         self.doc_retriever.embed_documents()
+
+        #self.doc_retriever.embed_documents()
+
 
 
         self.gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
@@ -68,7 +72,7 @@ class persona_rag:
 
         
     
-    def get_articles_by_index(article_dict, list_articles):
+    def get_articles_by_index(self, article_dict, list_articles):
 
         exp = re.compile("(\d+)")
         indexed_list = exp.findall(list_articles)
@@ -114,7 +118,7 @@ class persona_rag:
 
 
     def final_cog_output(self, query):
-        cog_output = Runner.run_sync(self.cog_agent).final_output
+        cog_output = Runner.run_sync(self.cog_agent, query).final_output
         return cog_output
 
 
@@ -126,19 +130,15 @@ class persona_rag:
 
 
     def ask_question(self, query):
+        
 
         
         #query = input("what is your query? \n")
-        print("somethjing ehre")
-        articles = self.doc_retriever.embed_query(query, 10)
-        print("after embed query")
+        articles = self.doc_retriever.embed_query(query, 5)
         self.global_message_pool["Query"] = query
-        print("after setting the gmp")
         self.global_message_pool["Passages"] = articles
             
         #str_glob_mess_pool = str(global_message_pool)
-
-        print("something wrong here")
 
 
         # Update the user profile
@@ -148,13 +148,13 @@ class persona_rag:
         glob_memory_state = self.update_glob_mem_state(f"Update the global message pool with new information from the user profile agent {profile_agent_output}")
         # Update the global message Pool
         self.global_message_pool["Global Memory"] = glob_memory_state
-        #print("GMP update #1", glob_memory_state)
+        print("GMP update #1", glob_memory_state)
 
 
         # With the articles given priortize the most relevant articles
         
         cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, priortize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. Just list the passage IDs that are best relevant in form of a Python list.")
-        #print("agent's article output", cont_retr_output)
+        print("agent's article output", cont_retr_output)
         # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
 
 
@@ -166,10 +166,10 @@ class persona_rag:
         #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\"  field with new information from the context retrieval agent {cont_retr_output}").final_output
 
 
-        lve_ses_suggestions = self.live_sess_agent(f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {global_message_pool}")
+        lve_ses_suggestions = self.get_live_sess_sugg(f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {str(self.global_message_pool)}")
 
         glob_memory_state = self.update_glob_mem_state(f"Update the current global memory \"{glob_memory_state}\" with new information from the live session agent {lve_ses_suggestions}")
-        #print(glob_memory_state)
+        print(glob_memory_state)
         self.global_message_pool["Global Memory"] = glob_memory_state
 
 
@@ -179,6 +179,7 @@ class persona_rag:
         retr_ranked_articles = self.get_articles_by_index(articles, ranked_article_output)
         del self.global_message_pool["Passages"]
         self.global_message_pool["Passages ranked most relevant to least relevant"] = retr_ranked_articles
+        print(self.global_message_pool.keys())
 
         #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
         
@@ -186,7 +187,7 @@ class persona_rag:
 
         cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, directly provide the answer without considering the passages."
         cot_answer = self.cot(cot_prompt)
-        
+        print(cot_answer)
 
         #cot_gmp = f"({global_message_pool}, Initial Answer: {cot_answer})"
         #print("chain of thought output", cot_gmp)
@@ -202,7 +203,7 @@ class persona_rag:
         self.global_message_pool["Global Memory"] = glob_memory_state
 
 
-        #print("udpated user insights", profile_agent_output)
+        print("udpated user insights", profile_agent_output)
 
         print(final_answer)
 
@@ -210,4 +211,67 @@ class persona_rag:
 
 
 
+def test_agent(n = 20):
 
+
+    
+
+
+    agent = persona_rag()
+
+    dataset = load_dataset("trivia_qa", "rc")
+    #pdds = dataset.to_pandas()
+    print(type(dataset))
+    print(len(dataset))
+
+
+    correct = 0
+        
+    for i, row in enumerate(dataset["validation"]):
+        q = row["question"]
+        gold = row["answer"]
+        #print(gold)
+        #print(type(gold))
+        #print(q)
+        #print("type for q", type(q))
+        
+        #print("This was asked to the agent", q)
+        pred = agent.ask_question(q)
+        
+        s = set(gold["aliases"])
+        s1 = s.union(set(gold["normalized_aliases"]))
+
+        for al in s1:
+            if al in pred.lower():
+                print("response is correct!")
+                correct += 1
+                break
+
+        #for alias in gold:
+        #    print(f"{gold[alias]} AND {gold}")
+        #    if gold[alias] in pred.lower():
+        #        print("response is correct!")
+        #        correct += 1
+        if i > n:
+            break
+
+        
+        print(f"Q {i} of {n}: {q}")
+        print(f"Pred: {pred}")
+        print(f"Gold: {gold}")
+        print(f"Accuracy: {correct}/{n}")
+        print("---")
+
+    print(f"Accuracy: {correct}/{n}")
+
+test_agent()
+
+
+
+"""
+agent = persona_rag()
+
+while True:
+    query = input("ask something")
+    agent.ask_question(query)
+    """
