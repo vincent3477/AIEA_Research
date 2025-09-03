@@ -4,66 +4,26 @@ import OpenMatch as om
 import re
 import faiss
 from sentence_transformers import SentenceTransformer
+from transformers import AutoModel, AutoTokenizer
 import progressbar
 import duckdb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
+import torch
 
 
 
 
 class k_doc_retriever:
-    def __init__(self, model, index = None, index_file = None, use_index_file = False, filenames = None):
+    def __init__(self, index = None, index_file = None, use_index_file = False, filenames = None):
         self.index_file = index_file
-        self.model = model
+        self.model = AutoModel.from_pretrained("OpenMatch/cocodr-base-msmarco")
+        self.tokenizer = AutoTokenizer.from_pretrained("OpenMatch/cocodr-base-msmarco")
         self.index = index
         self.initialized = False
         if not isinstance(filenames, list) and filenames != None:
             raise TypeError("Filename is not of type list.") 
         self.use_index_file = use_index_file
             
-
-    """def embed_documents(self):
-
-        #self.index = faiss.IndexFlat(384)
-        #self.model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
-
-        for indiv_file in self.filenames:
-            print(indiv_file)
-            summary_list = []
-            batch_id = 0
-            with open(indiv_file) as f:
-                
-                exp = re.compile("(\d+)\t(.+)\t(.+)")
-                line = f.readline()
-                it = 0
-                while line != "":
-                    print(it)
-                    text = exp.findall(line)[0][2]
-                    #print("Appending to a list")
-                    summary_list.append(text)
-                    if len(summary_list) % 10 == 0:
-                        batch_id += 1
-                        #print(batch_id)
-                        # encode the summary list in batches of 10
-                        embedding = self.model.encode(summary_list)
-                        self.index.add(embedding)
-                        summary_list = []
-                    line = f.readline()
-                    it += 1
-
-            
-
-            embeddings = self.model.encode(summary_list)
-            self.index.add(embeddings)
-            faiss.write(self.index, "wiki_articles.index")
-
-        self.initialized = True
-
-        print("Done Initializing.")
-
-    """
-    
     def embed_documents(self):
         if not self.use_index_file:
             summary_list = []
@@ -111,32 +71,35 @@ class k_doc_retriever:
         #print("the query passed in was", query)
         #if not self.initialized:
         #    raise ModuleNotFoundError("Unable to embed query. Model must be initialized.") 
-        #print("embed query")
-        input_embedding = self.model.encode(query)
+        print("embed query")
+        print(self.model)
+        device = torch.device("cpu")
+        self.model = self.model.to(device)
+        
+        #input_embedding = self.model.encode(query)
+        inputs = self.tokenizer(query, return_tensors="pt", padding = True, truncation = True)
+        #for key, tensor in inputs.items():
+        #    print(f"{key}: {tensor.shape}")
+        inputs = {key: value.to(device) for key, value in inputs.items()}
+        print(type(inputs))
+
+
+        
+        print("make a representation of input")
+        output  = self.model(**inputs)
+        print("get the output")
+        #embeddings = output.last_hidden_state.mean(dim=1)
+
+        print("make it past the part we embed the query")
+
         if self.index == None:
             self.index = faiss.read_index(self.index_file)
-        D, I = self.index.search(np.array([input_embedding]), k = num_results)
+        D, I = self.index.search(embeddings.deteach().numpy(), k = num_results)
         #print("we have to the top k index")
         # then we find the similarities between the query and the vectorized articles, either with the use of cosine similarities.
 
         assert len(I[0]) == num_results
         
-        
-        """
-        articles = {}
-        for indiv_file in self.filenames:
-            with open(indiv_file) as f:
-                line = f.readline()
-                index = 0
-                articles_found = 0
-                
-                while(line != "" and articles_found < num_results):
-                    if index in I[0]:
-                        articles_found += 1
-                        articles[index] = line
-                    line = f.readline()
-                    index += 1
-        """
 
         text_splitter = RecursiveCharacterTextSplitter(chunk_size = 100, chunk_overlap=0)
         text_list = {}
@@ -160,4 +123,5 @@ class k_doc_retriever:
         return text_list
     
 
-            
+        
+

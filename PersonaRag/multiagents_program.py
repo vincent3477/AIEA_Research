@@ -3,6 +3,7 @@ from openai import OpenAI
 import wikipedia
 from doc_retr_agent import k_doc_retriever
 from sentence_transformers import SentenceTransformer
+from transformers import AutoModel, AutoTokenizer
 import numpy as np
 from datasets import load_dataset
 import re
@@ -25,7 +26,7 @@ class persona_rag:
         client = OpenAI()
 
         # initialize the vector db of articles.
-        self.doc_retriever = k_doc_retriever(model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2'), index_file = "wiki_articles_1.index", use_index_file=True)
+        self.doc_retriever = k_doc_retriever(index_file = "wiki_articles_1.index", use_index_file=True)
         self.doc_retriever.embed_documents()
 
         #self.doc_retriever.embed_documents()
@@ -209,7 +210,7 @@ class persona_rag:
 
         return final_answer
 
-
+"""
 
 def test_agent(n = 20):
 
@@ -274,4 +275,4 @@ agent = persona_rag()
 while True:
     query = input("ask something")
     agent.ask_question(query)
-    """
+    
