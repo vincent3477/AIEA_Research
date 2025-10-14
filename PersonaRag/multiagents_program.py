@@ -26,11 +26,8 @@ class persona_rag:
         client = OpenAI()
 
         # initialize the vector db of articles.
-        self.doc_retriever = k_doc_retriever(index_file = "wiki_articles_1.index", use_index_file=True)
-        self.doc_retriever.embed_documents()
-
-        #self.doc_retriever.embed_documents()
-
+        self.doc_retriever = k_doc_retriever()
+       
 
 
         self.gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
@@ -87,7 +84,7 @@ class persona_rag:
             try:
                 return_vals[int(l)] = article_dict[int(l)]
             except KeyError:
-                print(f"ID {l} was NOT found. This can can lead to potential information loss.")
+                print(f"ID {l} was NOT found.")
         return return_vals
 
     def update_glob_mem_state(self, query):
@@ -135,7 +132,7 @@ class persona_rag:
 
         
         #query = input("what is your query? \n")
-        articles = self.doc_retriever.embed_query(query, 5)
+        articles, raw_articles = self.doc_retriever.embed_query(query, 5)
         self.global_message_pool["Query"] = query
         self.global_message_pool["Passages"] = articles
             
@@ -167,7 +164,7 @@ class persona_rag:
         #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\"  field with new information from the context retrieval agent {cont_retr_output}").final_output
 
 
-        lve_ses_suggestions = self.get_live_sess_sugg(f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {str(self.global_message_pool)}")
+        lve_ses_suggestions = self.get_live_sess_sugg(f"Using the context given, suggest queries or adjusting search results based on the retrieved passages and queries based on the current findings {str(self.global_message_pool)}. ")
 
         glob_memory_state = self.update_glob_mem_state(f"Update the current global memory \"{glob_memory_state}\" with new information from the live session agent {lve_ses_suggestions}")
         print(glob_memory_state)
@@ -208,71 +205,12 @@ class persona_rag:
 
         print(final_answer)
 
-        return final_answer
 
-"""
-
-def test_agent(n = 20):
-
-
-    
-
-
-    agent = persona_rag()
-
-    dataset = load_dataset("trivia_qa", "rc")
-    #pdds = dataset.to_pandas()
-    print(type(dataset))
-    print(len(dataset))
-
-
-    correct = 0
-        
-    for i, row in enumerate(dataset["validation"]):
-        q = row["question"]
-        gold = row["answer"]
-        #print(gold)
-        #print(type(gold))
-        #print(q)
-        #print("type for q", type(q))
-        
-        #print("This was asked to the agent", q)
-        pred = agent.ask_question(q)
-        
-        s = set(gold["aliases"])
-        s1 = s.union(set(gold["normalized_aliases"]))
-
-        for al in s1:
-            if al in pred.lower():
-                print("response is correct!")
-                correct += 1
-                break
-
-        #for alias in gold:
-        #    print(f"{gold[alias]} AND {gold}")
-        #    if gold[alias] in pred.lower():
-        #        print("response is correct!")
-        #        correct += 1
-        if i > n:
-            break
-
-        
-        print(f"Q {i} of {n}: {q}")
-        print(f"Pred: {pred}")
-        print(f"Gold: {gold}")
-        print(f"Accuracy: {correct}/{n}")
-        print("---")
-
-    print(f"Accuracy: {correct}/{n}")
-
-test_agent()
+        return final_answer, raw_articles
 
 
 
-"""
+
 agent = persona_rag()
 
-while True:
-    query = input("ask something")
-    agent.ask_question(query)
-    
+agent.ask_question("I am interested in the fleet of muni. Can you give me details about the fleet. ")
