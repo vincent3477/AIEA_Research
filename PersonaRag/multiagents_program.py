@@ -77,11 +77,7 @@ class persona_rag:
         exp = re.compile("(\d+)")
         indexed_list = exp.findall(list_articles)
 
-        print(list_articles)
-
         return_vals = {}
-        print(indexed_list)
-        print(article_dict.keys())
         for l in indexed_list:
             try:
                 return_vals[int(l)] = article_dict[int(l)]
@@ -145,8 +141,7 @@ class persona_rag:
         glob_memory_state = self.update_glob_mem_state(f"Update the global message pool as shown here \"{str(self.global_message_pool)}\" with new information from the user profile agent \"{profile_agent_output}\". If possible build on the information that is already supplied, otherwise do not lose the supplied info")
         # Update the global message Pool
         self.global_message_pool["Global Memory"] = glob_memory_state
-        print("GMP update #1", glob_memory_state)
-
+        print(" #### glob memory state after updating the user insights ####\n", glob_memory_state)
 
         # With the articles given priortize the most relevant articles
         
@@ -170,7 +165,8 @@ class persona_rag:
 
 
         glob_memory_state = self.update_glob_mem_state(f"Update the current global memory \"{glob_memory_state}\" with profile-based contextual suggestions from {update_user_suggested_topics}. If possible build on the information that is already supplied, otherwise do not lose the supplied info")
-        print(glob_memory_state)
+        print(" #### glob memory state after live suggestions ####\n", glob_memory_state)
+
         self.global_message_pool["Global Memory"] = glob_memory_state
         # update the user profile from the live sess agent
 
@@ -180,12 +176,9 @@ class persona_rag:
         retr_ranked_articles = self.get_articles_by_index(articles, ranked_article_output)
         del self.global_message_pool["Passages"]
         self.global_message_pool["Passages ranked most relevant to least relevant"] = retr_ranked_articles
-        print(self.global_message_pool.keys())
 
         #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
         
-
-
         cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, simply state \"No answer found in passages.\""
         cot_answer = self.cot(cot_prompt)
         print(cot_answer)
@@ -193,7 +186,7 @@ class persona_rag:
         #cot_gmp = f"({global_message_pool}, Initial Answer: {cot_answer})"
         #print("chain of thought output", cot_gmp)
 
-        cognitive_agent_prompt = f"Verify the reasoning process in the initial response shown here \"{cot_answer}\" for errors or misalignments to the query as shown here \"{query}\". Use insights from user interaction analysis shown here \"{str(self.global_message_pool)}\" to refine this response, correcting any inaccuracies and enhancing the query answers based on user profile. Ensure that your refined response aligns more closely with the user's immediate needs and incorporates foundational or advanced knowledge from other sources. Be sure to mirror the way they ask the query reflecting te same the user gives (based on the query). Do not restate intructions."
+        cognitive_agent_prompt = f"Verify the reasoning process in the initial response shown here \"{cot_answer}\" for errors or misalignments to the query as shown here \"{query}\". Use insights from user interaction analysis shown here \"{str(self.global_message_pool)}\" to refine this response, correcting any inaccuracies and enhancing the query answers based on user profile. Ensure that your refined response aligns more closely with the user's immediate needs and incorporates foundational or advanced knowledge from other sources. Be sure to mirror the way they ask the query reflecting the same tone the user gives (based on the query). Do not restate intructions."
 
         final_answer = self.final_cog_output(cognitive_agent_prompt)
 
@@ -203,9 +196,14 @@ class persona_rag:
         glob_memory_state = self.update_glob_mem_state(f"Update the global memory as shown here \"{str(self.global_message_pool)}\" with new information from the user profile agent {profile_agent_output}")
         self.global_message_pool["Global Memory"] = glob_memory_state
 
+        
 
-        print("udpated user insights", profile_agent_output)
+        print("#### updated user insights #### \n\n", profile_agent_output)
 
+
+        print(" #### last glob mem update ####\n", glob_memory_state)
+
+        print("#### final answer #### \n\n")
         print(final_answer)
 
 
