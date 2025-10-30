@@ -1,16 +1,21 @@
 from agents import Agent, Runner
 from openai import OpenAI
 import wikipedia
-from doc_retr_agent import k_doc_retriever
+from document_retrieval import k_doc_retriever
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoTokenizer
 import numpy as np
 from datasets import load_dataset
+from datasets import Dataset
 import re
 import faiss
 from ast import literal_eval
 from transformers import pipeline
 from datasets import load_dataset
+from ragas.metrics import (answer_relevancy, faithfulness, context_recall, context_precision, LLMContextPrecisionWithoutReference)
+from ragas import evaluate
+from datasets import load_dataset
+
 
 
 
@@ -127,7 +132,7 @@ class persona_rag:
 
         
         #query = input("what is your query? \n")
-        articles, raw_articles = self.doc_retriever.embed_query(query, 15)
+        articles, raw_articles = self.doc_retriever.embed_query(query, 3)
         self.global_message_pool["Query"] = query
         self.global_message_pool["Passages"] = articles
             
@@ -141,12 +146,12 @@ class persona_rag:
         glob_memory_state = self.update_glob_mem_state(f"Update the global message pool as shown here \"{str(self.global_message_pool)}\" with new information from the user profile agent \"{profile_agent_output}\". If possible build on the information that is already supplied, otherwise do not lose the supplied info")
         # Update the global message Pool
         self.global_message_pool["Global Memory"] = glob_memory_state
-        print(" #### glob memory state after updating the user insights ####\n", glob_memory_state)
+        #print(" #### glob memory state after updating the user insights ####\n", glob_memory_state)
 
         # With the articles given priortize the most relevant articles
         
         cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, priortize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. Just list the passage IDs that are best relevant in form of a Python list.")
-        print("agent's article output", cont_retr_output)
+        #print("agent's article output", cont_retr_output)
         # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
 
 
@@ -165,7 +170,7 @@ class persona_rag:
 
 
         glob_memory_state = self.update_glob_mem_state(f"Update the current global memory \"{glob_memory_state}\" with profile-based contextual suggestions from {update_user_suggested_topics}. If possible build on the information that is already supplied, otherwise do not lose the supplied info")
-        print(" #### glob memory state after live suggestions ####\n", glob_memory_state)
+        #print(" #### glob memory state after live suggestions ####\n", glob_memory_state)
 
         self.global_message_pool["Global Memory"] = glob_memory_state
         # update the user profile from the live sess agent
@@ -181,7 +186,7 @@ class persona_rag:
         
         cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, simply state \"No answer found in passages.\""
         cot_answer = self.cot(cot_prompt)
-        print(cot_answer)
+        #print(cot_answer)
 
         #cot_gmp = f"({global_message_pool}, Initial Answer: {cot_answer})"
         #print("chain of thought output", cot_gmp)
@@ -198,10 +203,10 @@ class persona_rag:
 
         
 
-        print("#### updated user insights #### \n\n", profile_agent_output)
+        #print("#### updated user insights #### \n\n", profile_agent_output)
 
 
-        print(" #### last glob mem update ####\n", glob_memory_state)
+        #print(" #### last glob mem update ####\n", glob_memory_state)
 
         print("#### final answer #### \n\n")
         print(final_answer)
@@ -212,8 +217,63 @@ class persona_rag:
 
 
 
-agent = persona_rag()
+def test_agent(n = 20):
 
-while(1):
-    question = input("Ask question here\n")
-    agent.ask_question(question)
+    agent = persona_rag()
+
+
+    
+    dataset = load_dataset("web_questions")
+
+    qa_set = []
+
+    limit = 24
+    i = 0
+
+
+    from langchain_openai.chat_models import ChatOpenAI
+    from ragas.llms import LangchainLLMWrapper
+
+    llm_model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
+    evaluator_llm = LangchainLLMWrapper(llm_model)  
+
+    print(len(dataset["test"]))
+
+    context_precision = LLMContextPrecisionWithoutReference(llm = evaluator_llm)
+    
+    for entry in dataset["test"]:
+        query = entry["question"]
+        answers = entry["answers"]
+        answer, context_articles = agent.ask_question(query)
+        #question -> string
+        #contexts -> list of strings
+        #answer -> string
+        #reference -> string
+        qa = {"question": query, "contexts": context_articles, "answer": answer, "reference": ";".join(answers)}
+
+        for a in range(len(context_articles)):
+            nt = "".join(c for c in context_articles[a] if c.isprintable())
+            context_articles[a] = nt
+
+        qa_set.append(qa)
+
+        i += 1
+        print("Progress i", i)
+        if i >= limit:
+            break
+
+    eval_dataset = Dataset.from_list(qa_set)
+
+    result = evaluate(eval_dataset, metrics = [context_precision, context_recall, faithfulness, answer_relevancy])
+
+    
+
+    results_df = result.to_pandas()
+
+    results_df.to_csv('results.csv', index = False)
+    print(results_df.head())
+
+    results_df
+    
+
+test_agent()
