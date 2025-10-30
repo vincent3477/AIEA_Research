@@ -7,11 +7,9 @@ from ragas import evaluate
 from datasets import load_dataset, Dataset
 
 
-def test_agent(n = 20):
+def test_agent():
 
     agent = persona_rag()
-
-
     
     dataset = load_dataset("web_questions")
 
