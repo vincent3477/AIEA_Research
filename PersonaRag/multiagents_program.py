@@ -12,14 +12,7 @@ import faiss
 from ast import literal_eval
 from transformers import pipeline
 from datasets import load_dataset
-from ragas.metrics import (answer_relevancy, faithfulness, context_recall, context_precision, LLMContextPrecisionWithoutReference)
-from ragas import evaluate
-from datasets import load_dataset
 
-
-
-
-    
 
 #index = None
 #model = None
