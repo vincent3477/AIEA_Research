@@ -12,6 +12,17 @@ import faiss
 from ast import literal_eval
 from transformers import pipeline
 from datasets import load_dataset
+import json
+from datasets import load_dataset
+from langchain_openai.chat_models import ChatOpenAI
+from ragas.llms import LangchainLLMWrapper
+from langchain.schema import SystemMessage, HumanMessage
+from ragas.metrics import (answer_relevancy, faithfulness, context_recall, answer_correctness, context_precision)
+from ragas import evaluate
+from datasets import load_dataset, Dataset
+import duckdb
+from json import loads
+import json
 
 
 #index = None
@@ -23,6 +34,8 @@ class persona_rag:
 
         client = OpenAI()
 
+        self.wiki_text_db = duckdb.connect("wiki_chunked.duckdb")
+
         # initialize the vector db of articles.
         self.doc_retriever = k_doc_retriever()
        
@@ -33,6 +46,9 @@ class persona_rag:
 
         self.global_message_pool = {}
         self.global_message_pool["Global Memory"] = self.gmp_format
+        self.global_message_pool["Past 10 Passages"] = [] # a queue of dicts tracks the past number passages. Apended by the document ranking agent.
+        # structure: [{P1: a brief summary, P2: a brief summary}]
+        # if the live session agent is taken into consideration, then there would more profound information of knowing which documents are ACTUALLY relevant
             
 
         # Serves as a hub for interagent communication
@@ -45,7 +61,7 @@ class persona_rag:
         # Responsible for retrieving the top relevant documents based on user needs and interests
         self.cont_retr_agent = Agent(name="Contextual Retrieval Agent", instructions = "You are a search technology expert guiding the Contextual Retrieval Agent to deliver context-aware document retrieval. Using the global memory pool and the retrieved passages, \
                                 identify strategies to refine document retrieval. Highlight how user preferences, immediate needs, and global insights can be leveraged to adjust search queries and prioritize results that align with the user's interests. Ensure the Contextual \
-                                Retrieval Agent uses this shared information to deliver more relevant and valuable results.")
+                                Retrieval Agent uses this shared information to deliver more relevant and valuable results.  In your responses, just show the json without the json declaration and without any extra text. ")
 
         # Responsible for adjusting search results real time to best suite what the user is looking for right now.
         self.live_sess_agent = Agent(name = "Live Session Agent", instructions = "Your expertise in session analysis is required to assist the Live Session Agent in dynamically adjusting results. Examine the retrieved passages and information in the global memory pool. \
@@ -54,7 +70,7 @@ class persona_rag:
 
         # Responsible for priortizing documents to match the context.
         self.doc_rank_agent = Agent(name = "Document Ranking Agent", instructions="Your task is to help the prioritize documents for better ranking. Analyze the retrieved passages and global memory pool to identify ways to rank documents effectively. Focus on combining \
-                            historical user preferences, immediate needs, and session behavior to refine ranking algorithms. Your insights should ensure that documents presented by the Document Ranking Agent are prioritized to match user interests and search context.")
+                            historical user preferences, immediate needs, and session behavior to refine ranking algorithms. Your insights should ensure that documents presented by the Document Ranking Agent are prioritized to match user interests and search context. In your responses, just show the json without the json declaration and without any extra text. ")
 
 
         self.user_prof_agent = Agent(name = "User Profile Agent", instructions="Your task is to help the User Profile Agent improve its understanding of user preferences based on ranked document lists and the shared global memory pool. From the provided passages and global \
@@ -70,18 +86,70 @@ class persona_rag:
 
         
     
+    def retrieve_articles(self, indexes):
+
+        if indexes is not None:
+
+            for i in range(len(indexes)):
+                if not isinstance(indexes[i], int):
+                    indexes[i] = int(indexes[i])
+                    
+
+            query = "SELECT * FROM wiki_chunked WHERE column0 IN (SELECT UNNEST(?))"
+            df = self.wiki_text_db.execute(query, [indexes]).fetchall()     
+
+            text_list_raw = []
+
+            print("THE DATAFRAME WE JUST GOT", df)
+            text_list = dict(df)
+
+            for i in df:
+                text_list_raw.append(i[1])
+            return text_list, text_list_raw
+        else:
+            print("Invalid indexes passed in. Returning empty fields.")
+            return {}, []
+
+
+
+           
+    
+    def json_to_list(self, json_string):
+        try:
+            index_list = []
+            json_format = json.loads(json_string)
+            for i, _ in enumerate(json_format):
+                index_list.append(int(i))
+            return index_list
+
+        except Exception as e:
+            print(f"Could not properly parse articles, error {e}")
+            return None
+
     def get_articles_by_index(self, article_dict, list_articles):
 
         exp = re.compile("(\d+)")
         indexed_list = exp.findall(list_articles)
 
         return_vals = {}
+        raw_articles = []
         for l in indexed_list:
             try:
+                raw_articles.append(axrticle_dict[int(l)])
                 return_vals[int(l)] = article_dict[int(l)]
             except KeyError:
+                try:
+                    wiki_db = duckdb.connect("wiki_chunked.duckdb")
+                    res = wiki_db.execute(f"SELECT column1 FROM wiki_chunked WHERE column0 = {int(l)}").fetchone()
+                    raw_articles.append(res[0])
+                    return_vals[int(l)] = res[0] 
+                except Exception as e:
+                    print(f"Could not retrieve document {l}. Error {e}")
+
+
+
                 print(f"ID {l} was NOT found.")
-        return return_vals
+        return return_vals, raw_articles
 
     def update_glob_mem_state(self, query):
         glob_memory_state = Runner.run_sync(self.glob_message_pool, query).final_output
@@ -125,7 +193,11 @@ class persona_rag:
 
         
         #query = input("what is your query? \n")
-        articles, raw_articles = self.doc_retriever.embed_query(query, 3)
+        indexes_for_retrieval = self.doc_retriever.embed_query(query, 3)
+
+        articles, raw_articles = self.retrieve_articles(indexes_for_retrieval)
+        #articles with ID | just the articles in the form of a list.
+
         self.global_message_pool["Query"] = query
         self.global_message_pool["Passages"] = articles
             
@@ -143,12 +215,14 @@ class persona_rag:
 
         # With the articles given priortize the most relevant articles
         
-        cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, priortize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. Just list the passage IDs that are best relevant in form of a Python list.")
+        cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, prioritize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. In your responses, just show the json without the json declaration and without any extra text.  {{Article_ID: <id here>, Brief_Summary: <summary here>}}")
         #print("agent's article output", cont_retr_output)
         # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
+        print(cont_retr_output)
+        cont_retr_article_list = self.json_to_list(cont_retr_output)
 
 
-        cont_retr_articles = self.get_articles_by_index(articles, cont_retr_output)
+        cont_retr_articles, raw_articles = self.retrieve_articles(cont_retr_article_list)
         self.global_message_pool["Passages"] = cont_retr_articles
         #print(cont_retr_articles)
 
@@ -168,16 +242,23 @@ class persona_rag:
         self.global_message_pool["Global Memory"] = glob_memory_state
         # update the user profile from the live sess agent
 
-        # Re-rank the articles.
-        ranked_article_output  = self.rank_docs(f"Rerank the documents in the current field \"passages\". Simply give out the IDs of the passages. {self.global_message_pool}")
-                                                
-        retr_ranked_articles = self.get_articles_by_index(articles, ranked_article_output)
+        past_10_query_articles = str(self.global_message_pool["Past 10 Passages"])
+
+        # Re-rank the articles. Include the past articles if they are relevant.
+        ranked_article_output  = self.rank_docs(f"Rerank the documents in the current field \"passages\". Included are articles that were ranked from the past 10 queries. Past articles from last 10 queries: {past_10_query_articles}\". If any entries from article corpus from the past 10 queries are highly relevant, include them in the ranking. In your responses, just show the json without the json declaration and without any extra text just like the following '{{Article_ID: <id here>, Brief_Summary: <summary here>}}'. {self.global_message_pool}")
+        print("RERANKED ARTICLE RESULTS", ranked_article_output)   
+
+        ranked_index_list = self.json_to_list(ranked_article_output)
+
+        retr_ranked_articles, raw_articles = self.retrieve_articles(ranked_index_list)
         del self.global_message_pool["Passages"]
         self.global_message_pool["Passages ranked most relevant to least relevant"] = retr_ranked_articles
-
-        #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
         
-        cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If no passage is relevant, simply state \"No answer found in passages.\""
+        #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool with new information from the document ranking agent {ranked_article_output}").final_output
+
+        #past_article_output = self.get_articles_by_index(articles, self.glob_message_pool["Past 10 Passages"])
+        
+        cot_prompt = f"Question: {query}, Passages: {retr_ranked_articles}, 1. Read the given question and passages to gather relevant information. 2. Write reading notes summarizing the key points from these passages. 3. Discuss the relevance of the given question and passages. 4. If some passages are relevant to the given question, provide a brief answer based on the passages. 5. If and only if no passage is relevant at all, you can simply state the answer to the question without looking at the passages."
         cot_answer = self.cot(cot_prompt)
         #print(cot_answer)
 
@@ -194,6 +275,12 @@ class persona_rag:
         glob_memory_state = self.update_glob_mem_state(f"Update the global memory as shown here \"{str(self.global_message_pool)}\" with new information from the user profile agent {profile_agent_output}")
         self.global_message_pool["Global Memory"] = glob_memory_state
 
+        self.global_message_pool["Past 10 Passages"].insert(0, retr_ranked_articles) #this should contain the most relevant articles
+        if len(self.global_message_pool["Past 10 Passages"]) == 10:
+            self.global_message_pool["Past 10 Passages"].pop(-1)
+        print(self.global_message_pool["Past 10 Passages"])
+
+
         
 
         #print("#### updated user insights #### \n\n", profile_agent_output)
@@ -206,15 +293,29 @@ class persona_rag:
 
 
         return final_answer, raw_articles
+    
+
+def main():
+    agent = persona_rag()
+    while(1):
+        p = input("Ask something here\n")
+        agent.ask_question(p)
+
+if __name__ == "__main__":
+    main()
+    
 
 
+"""
+
+def test_agent():
 
 
-def test_agent(n = 20):
+    llm_judge = ChatOpenAI(model="gpt-4o")
+
+    correctness_measurement = []
 
     agent = persona_rag()
-
-
     
     dataset = load_dataset("web_questions")
 
@@ -224,29 +325,40 @@ def test_agent(n = 20):
     i = 0
 
 
-    from langchain_openai.chat_models import ChatOpenAI
-    from ragas.llms import LangchainLLMWrapper
+    
 
-    llm_model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0)
-    evaluator_llm = LangchainLLMWrapper(llm_model)  
 
     print(len(dataset["test"]))
 
-    context_precision = LLMContextPrecisionWithoutReference(llm = evaluator_llm)
     
     for entry in dataset["test"]:
         query = entry["question"]
-        answers = entry["answers"]
+        reference = entry["answers"]
         answer, context_articles = agent.ask_question(query)
         #question -> string
         #contexts -> list of strings
         #answer -> string
         #reference -> string
-        qa = {"question": query, "contexts": context_articles, "answer": answer, "reference": ";".join(answers)}
+
+        
 
         for a in range(len(context_articles)):
             nt = "".join(c for c in context_articles[a] if c.isprintable())
             context_articles[a] = nt
+        
+
+        system_instructions = "You are an expert at evaluating whether or not an answer is correct."
+
+        eval_prompt = f"Given the following \n Question: \"{query}\" \n Retrieved Articles: \"{context_articles}\" \n Model answer: \"{answer}\" \n Reference answer(s): \"{reference}\", evaluate is the model answer correct given the question and the reference. Correct answers in the reference are separated by \";\". When  the Reference Answers field has multiple answers, you can deduct points if and only if the the context of the query require some or all of of the multiple responses. Only output a json formatted exactly as shown in the following {{Evaluation: <put evaluation here>, Score: 0.89}}"
+
+        messages = [SystemMessage(content = system_instructions), HumanMessage(content = eval_prompt)]
+
+        accuracy_results = llm_judge.invoke(messages).content
+
+        correctness_measurement.append(accuracy_results)
+
+        qa = {"question": query, "contexts": context_articles, "answer": answer, "reference": "; ".join(reference)}
+
 
         qa_set.append(qa)
 
@@ -259,14 +371,33 @@ def test_agent(n = 20):
 
     result = evaluate(eval_dataset, metrics = [context_precision, context_recall, faithfulness, answer_relevancy])
 
-    
+    print("#### correctness results #####")
+    for i in correctness_measurement:
+        print(i)
+        print("\n")
 
     results_df = result.to_pandas()
 
-    results_df.to_csv('results.csv', index = False)
+    results_df.to_csv('results1.csv', index = False)
+
     print(results_df.head())
 
     results_df
-    
 
 test_agent()
+
+
+Agent textual evaluation guidelines
+- Metrics to check for:
+    - Hallucination: do responses contain facts or claims not present in the provided context
+    - Faithfulness: do responses accuracy represent the context.
+    - Content Similarity: are the responses consistent even if the query is qworded slightly differently
+    - Completeness
+    - Answer Similarity: How well do the responses address the query
+
+- Understanding the conbtext (evlauating how well the agent is using the context)
+    - context position: where does the context appear in the responses (should be normally at the top)
+    - context precision: are the chunks grouped logically and does the response contain the original meaning
+    - Context relevancy: is the respoinse using the most appropriate pieces of context
+    - context recall: does the llm response recall the context provided.
+"""

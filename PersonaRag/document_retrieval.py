@@ -159,10 +159,11 @@ class k_doc_retriever:
             if i == num_results - 1:
                 break
         
-        text_list = {}
-        text_list_raw = []    
+        #text_list = {}
+        #text_list_raw = []    
 
-
+        return indexes_for_query
+        """
         query = "SELECT * FROM wiki_chunked WHERE column0 IN (SELECT UNNEST(?))"
         df = self.wiki_db.execute(query, [indexes_for_query]).fetchall()
 
@@ -176,6 +177,6 @@ class k_doc_retriever:
 
 
         return text_list, text_list_raw
-    
+        """
 
             
