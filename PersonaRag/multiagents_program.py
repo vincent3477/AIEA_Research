@@ -88,6 +88,8 @@ class persona_rag:
     
     def retrieve_articles(self, indexes):
 
+        print("indexes passed", indexes)
+
         if indexes is not None:
 
             for i in range(len(indexes)):
@@ -116,10 +118,11 @@ class persona_rag:
     
     def json_to_list(self, json_string):
         try:
+            print("json string passed in ", json_string)
             index_list = []
             json_format = json.loads(json_string)
-            for i, _ in enumerate(json_format):
-                index_list.append(int(i))
+            for i in json_format:
+                index_list.append(int(i.get("Article_ID")))
             return index_list
 
         except Exception as e:
@@ -128,6 +131,8 @@ class persona_rag:
 
     def get_articles_by_index(self, article_dict, list_articles):
 
+
+
         exp = re.compile("(\d+)")
         indexed_list = exp.findall(list_articles)
 
@@ -135,7 +140,7 @@ class persona_rag:
         raw_articles = []
         for l in indexed_list:
             try:
-                raw_articles.append(axrticle_dict[int(l)])
+                raw_articles.append(article_dict[int(l)])
                 return_vals[int(l)] = article_dict[int(l)]
             except KeyError:
                 try:
@@ -196,6 +201,8 @@ class persona_rag:
         indexes_for_retrieval = self.doc_retriever.embed_query(query, 3)
 
         articles, raw_articles = self.retrieve_articles(indexes_for_retrieval)
+        print("ARTICLES WITH ID", articles)
+        print("\n\n RAW ARTICLES", raw_articles)
         #articles with ID | just the articles in the form of a list.
 
         self.global_message_pool["Query"] = query
@@ -214,8 +221,8 @@ class persona_rag:
         #print(" #### glob memory state after updating the user insights ####\n", glob_memory_state)
 
         # With the articles given priortize the most relevant articles
-        
-        cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, prioritize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. In your responses, just show the json without the json declaration and without any extra text.  {{Article_ID: <id here>, Brief_Summary: <summary here>}}")
+        print("CURRENT STATE OF GLOBAL MESSAGE POOL ", str(self.glob_message_pool))
+        cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, prioritize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. In your responses, just show the json without the json declaration and do NOT show include any extra keys, explanations or text outside the json. Start the entire message with \"[\".[{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}]")
         #print("agent's article output", cont_retr_output)
         # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
         print(cont_retr_output)
@@ -245,7 +252,8 @@ class persona_rag:
         past_10_query_articles = str(self.global_message_pool["Past 10 Passages"])
 
         # Re-rank the articles. Include the past articles if they are relevant.
-        ranked_article_output  = self.rank_docs(f"Rerank the documents in the current field \"passages\". Included are articles that were ranked from the past 10 queries. Past articles from last 10 queries: {past_10_query_articles}\". If any entries from article corpus from the past 10 queries are highly relevant, include them in the ranking. In your responses, just show the json without the json declaration and without any extra text just like the following '{{Article_ID: <id here>, Brief_Summary: <summary here>}}'. {self.global_message_pool}")
+        ranked_article_output  = self.rank_docs(f"Rerank the documents in the current field \"passages\". Included are articles that were ranked from the past 10 queries. Past articles from last 10 queries: {past_10_query_articles}\". If any entries from article corpus from the past 10 queries are highly relevant, \
+                                                include them in the ranking. {self.global_message_pool}. In your responses, just show the json without the json declaration and do NOT show include any extra keys, explanations or text outside the json. Start the entire message with \"[\". [{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}].") #need to include the correct form of output.
         print("RERANKED ARTICLE RESULTS", ranked_article_output)   
 
         ranked_index_list = self.json_to_list(ranked_article_output)
@@ -278,7 +286,7 @@ class persona_rag:
         self.global_message_pool["Past 10 Passages"].insert(0, retr_ranked_articles) #this should contain the most relevant articles
         if len(self.global_message_pool["Past 10 Passages"]) == 10:
             self.global_message_pool["Past 10 Passages"].pop(-1)
-        print(self.global_message_pool["Past 10 Passages"])
+        print("THE LAST 10 PASSAGES", self.global_message_pool["Past 10 Passages"])
 
 
         
