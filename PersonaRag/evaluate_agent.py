@@ -2,7 +2,7 @@ from multiagents_program import persona_rag
 from datasets import load_dataset
 from langchain_openai.chat_models import ChatOpenAI
 from ragas.llms import LangchainLLMWrapper
-from ragas.metrics import (answer_relevancy, faithfulness, context_recall, context_precision, LLMContextPrecisionWithoutReference)
+from ragas.metrics import (answer_relevancy, faithfulness, context_recall, context_precision, answer_correctness)
 from ragas import evaluate
 from datasets import load_dataset, Dataset
 
@@ -26,7 +26,6 @@ def test_agent():
 
     print(len(dataset["test"]))
 
-    context_precision = LLMContextPrecisionWithoutReference(llm = evaluator_llm)
     
     for entry in dataset["test"]:
         query = entry["question"]
@@ -51,7 +50,7 @@ def test_agent():
 
     eval_dataset = Dataset.from_list(qa_set)
 
-    result = evaluate(eval_dataset, metrics = [context_precision, context_recall, faithfulness, answer_relevancy])
+    result = evaluate(eval_dataset, metrics = [context_precision, context_recall, faithfulness, answer_relevancy, answer_correctness])
 
     
 
