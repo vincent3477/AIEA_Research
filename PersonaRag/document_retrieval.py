@@ -1,12 +1,14 @@
+import os
 from datasets import load_dataset
 import numpy as np
 import OpenMatch as om
 import re
-import faiss
+import faiss #1.11.0
 from sentence_transformers import SentenceTransformer
 import progressbar
 import duckdb
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from huggingface_hub import snapshot_download
 
 
 
@@ -15,24 +17,40 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 class k_doc_retriever:
     def __init__(self):
         self.model = SentenceTransformer('sentence-transformers/msmarco-roberta-base-v2')
-        self.index13 = faiss.read_index("embeddings_768d_1.bin") #Chunks 1-3 (in millions)
-        self.index34 = faiss.read_index("embeddings_768d_2.bin") #Chunks 3-4
-        self.index45 = faiss.read_index("embeddings_768d_3.bin") #Chunks 4-5
-        self.index56 = faiss.read_index("embeddings_768d_4.bin") #Chunks 5-6
-        self.index67 = faiss.read_index("embeddings_768d_5.bin") #Chunks 6-7
-        self.index78 = faiss.read_index("embeddings_768d_6.bin") #Chunks 7-8
-        self.index89 = faiss.read_index("embeddings_768d_7.bin") #Chunks 8-9
-        self.index910 = faiss.read_index("embeddings_768d_8.bin") #Chunks 9-10
-        self.index1011 = faiss.read_index("embeddings_768d_9.bin") #Chunks 10-11
-        self.index1112 = faiss.read_index("embeddings_768d_10.bin") #Chunks 11-12
-        self.index1213 = faiss.read_index("embeddings_768d_11.bin") #Chunks 12-13
-        self.index13plus = faiss.read_index("embeddings_768d_12.bin") #Chunks 13-13.4
-        self.wiki_db = duckdb.connect("wiki_chunked.duckdb")
-                    
+        """self.dataset_path = snapshot_download(repo_id = "vsiu2/my_persona_rag", repo_type = "dataset")
+        self.index13 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_1.bin")) #Chunks 1-3 (in millions)
+        self.index34 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_2.bin")) #Chunks 3-4
+        self.index45 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_3.bin")) #Chunks 4-5
+        self.index56 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_4.bin")) #Chunks 5-6
+        self.index67 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_5.bin")) #Chunks 6-7
+        self.index78 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_6.bin")) #Chunks 7-8
+        self.index89 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_7.bin")) #Chunks 8-9
+        self.index910 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_8.bin")) #Chunks 9-10
+        self.index1011 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_9.bin")) #Chunks 10-11
+        self.index1112 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_10.bin")) #Chunks 11-12
+        self.index1213 = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_11.bin")) #Chunks 12-13
+        self.index13plus = faiss.read_index(os.path.join(self.dataset_path,"embeddings_768d_12.bin")) #Chunks 13-13.4
+        self.wiki_db = duckdb.connect(os.path.join(self.dataset_path, "wiki_chunked.duckdb"))
+        """
+        #self.index13 = faiss.read_index("embeddings_768d_1.bin") #Chunks 1-3 (in millions)
+        #self.index34 = faiss.read_index("embeddings_768d_2.bin") #Chunks 3-4
+        #self.index56 = faiss.read_index("embeddings_768d_4.bin") #Chunks 5-6
+        #self.index67 = faiss.read_index("embeddings_768d_5.bin") #Chunks 6-7
+        #self.index78 = faiss.read_index("embeddings_768d_6.bin") #Chunks 7-8
+        #self.index89 = faiss.read_index("embeddings_768d_7.bin") #Chunks 8-9
+        #self.index910 = faiss.read_index("embeddings_768d_8.bin") #Chunks 9-10
+        #self.index1011 = faiss.read_index("embeddings_768d_9.bin") #Chunks 10-11
+        #self.index1112 = faiss.read_index("embeddings_768d_10.bin") #Chunks 11-12
+        #self.index1213 = faiss.read_index("embeddings_768d_11.bin") #Chunks 12-13
+        #self.index13plus = faiss.read_index("embeddings_768d_12.bin") #Chunks 13-13.4
+        self.wiki_db = duckdb.connect("wiki_chunked.duckdb")            
         
 
     def get_model(self):
         return self.model
+    
+    def get_dataset_path(self):
+        return self.dataset_path
     
     def map_and_merge(self, iter1, iter2, curr_dict):
         """    
@@ -44,6 +62,8 @@ class k_doc_retriever:
 
         return curr_dict
         """
+
+        #print("passed into map and merge", iter1, iter2)
 
         key_values = zip(iter1, iter2) # distances, indexes
 
@@ -65,66 +85,77 @@ class k_doc_retriever:
 
         
         embeds_kv_pair = [] # a list of tuples that has distances and indexes.
-        
-        d1, i1 = self.index13.search(np.array([input_embedding]), k = num_entries * 3)
+        index13 = faiss.read_index("embeddings_768d_1.bin")
+        d1, i1 = index13.search(np.array([input_embedding]), k = num_entries * 3)
         embeds_kv_pair = self.map_and_merge(d1[0], i1[0], embeds_kv_pair)
+        del index13
 
         print(embeds_kv_pair)
-
-        d2, i2 = self.index34.search(np.array([input_embedding]), k = num_entries)
+        index34 = faiss.read_index("embeddings_768d_2.bin")
+        d2, i2 = index34.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d2[0], i2[0], embeds_kv_pair)
+        del index34
 
         print(embeds_kv_pair)
-        
-        d3, i3 = self.index45.search(np.array([input_embedding]), k = num_entries)
+        index45 = faiss.read_index("embeddings_768d_3.bin")
+        d3, i3 = index45.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d3[0], i3[0], embeds_kv_pair)
+        del index45
 
         print(embeds_kv_pair)
-
-        d4, i4 = self.index56.search(np.array([input_embedding]), k = num_entries)
+        index56 = faiss.read_index("embeddings_768d_4.bin")
+        d4, i4 = index56.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d4[0], i4[0], embeds_kv_pair)
+        del index56
 
         print(embeds_kv_pair)
-
-        d5, i5 = self.index67.search(np.array([input_embedding]), k = num_entries)
-        embeds_kv_pair = self.map_and_merge(d5[0], i5[0], embeds_kv_pair)   
+        index67 = faiss.read_index("embeddings_768d_5.bin")
+        d5, i5 = index67.search(np.array([input_embedding]), k = num_entries)
+        embeds_kv_pair = self.map_and_merge(d5[0], i5[0], embeds_kv_pair) 
+        del index67  
 
         print(embeds_kv_pair)
-
-        d6, i6 = self.index78.search(np.array([input_embedding]), k = num_entries)
+        index78 = faiss.read_index("embeddings_768d_6.bin")
+        d6, i6 = index78.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d6[0], i6[0], embeds_kv_pair)
+        del index78
 
-        print(embeds_kv_pair)
-
-        d7, i7 = self.index89.search(np.array([input_embedding]), k = num_entries)
+        #print(embeds_kv_pair)
+        index89 = faiss.read_index("embeddings_768d_7.bin")
+        d7, i7 = index89.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d7[0], i7[0], embeds_kv_pair)  
 
-        print(embeds_kv_pair)
-
-        d8, i8 = self.index910.search(np.array([input_embedding]), k = num_entries)
+        #print(embeds_kv_pair)
+        index910 = faiss.read_index("embeddings_768d_8.bin")
+        d8, i8 = index910.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d8[0], i8[0], embeds_kv_pair)  
+        del index910
 
-        print(embeds_kv_pair)
+        #print(embeds_kv_pair)
+        index1011 = faiss.read_index("embeddings_768d_9.bin")
+        d9, i9 = index1011.search(np.array([input_embedding]), k = num_entries)
+        embeds_kv_pair = self.map_and_merge(d9[0], i9[0], embeds_kv_pair)
+        del index1011
 
-        d9, i9 = self.index1011.search(np.array([input_embedding]), k = num_entries)
-        embeds_kv_pair = self.map_and_merge(d9[0], i9[0], embeds_kv_pair)   
+        #print(embeds_kv_pair) 
+        index1112 = faiss.read_index("embeddings_768d_10.bin")
+        d10, i10 = index1112.search(np.array([input_embedding]), k = num_entries)
+        embeds_kv_pair = self.map_and_merge(d10[0], i10[0], embeds_kv_pair)
+        del index1112  
 
-        print(embeds_kv_pair) 
-
-        d10, i10 = self.index1112.search(np.array([input_embedding]), k = num_entries)
-        embeds_kv_pair = self.map_and_merge(d10[0], i10[0], embeds_kv_pair)  
-
-        print(embeds_kv_pair)  
-
-        d11, i11 = self.index1213.search(np.array([input_embedding]), k = num_entries)
+        #print(embeds_kv_pair)  
+        index1213 = faiss.read_index("embeddings_768d_11.bin")
+        d11, i11 = index1213.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d11[0], i11[0], embeds_kv_pair)  
+        del index1213
 
-        print(embeds_kv_pair)
-
-        d12, i12 = self.index13plus.search(np.array([input_embedding]), k = num_entries)
+        #print(embeds_kv_pair)
+        index13plus = faiss.read_index("embeddings_768d_12.bin")
+        d12, i12 = index13plus.search(np.array([input_embedding]), k = num_entries)
         embeds_kv_pair = self.map_and_merge(d12[0], i12[0], embeds_kv_pair)  
+        del index13plus
 
-        print(embeds_kv_pair) 
+        #print(embeds_kv_pair) 
 
         embeds_kv_pair = sorted(embeds_kv_pair, key= lambda item: item[0])
 
