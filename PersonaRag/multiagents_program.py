@@ -30,14 +30,11 @@ from prompts.live_session_prompts import (
     build_live_session_suggestions_prompt,
     build_update_user_from_live_session_prompt,
 )
-
-from prompts.retrieval_prompts import build_rank_articles_prompt
-
+from prompts.retrieval_prompts import build_rank_articles_prompt, build_cont_retr_prompt
 from prompts.cot_prompt import (
     build_cot_prompt,
     build_cognitive_agent_prompt,
 )
-
 from prompts.update_mem import (
     build_update_global_memory_from_live_prompt,
     build_update_user_profile_prompt,
@@ -45,9 +42,6 @@ from prompts.update_mem import (
     build_final_gmp_update_prompt,
 )
 
-
-#index = None
-#model = None
 
 class persona_rag:
     def __init__(self):
@@ -63,7 +57,7 @@ class persona_rag:
 
 
         self.gmp_format = "User Profile Agent: {user_profile_answer}, Live Session Agent: {live_session_answer}, Document Ranking Agent: {document_ranking_answer}"
-
+        self.contextual_retriever_memory = {}
         self.global_message_pool = {}
         self.global_message_pool["Global Memory"] = self.gmp_format
         self.global_message_pool["Past 10 Passages"] = [] # a queue of dicts tracks the past number passages. Apended by the document ranking agent.
@@ -122,9 +116,11 @@ class persona_rag:
         Ensure the Contextual Retrieval Agent uses this shared information to
         deliver more relevant and valuable results.
 
-        In your responses, just show the json without the json declaration and
-        without any extra text.
-        """
+        You will be given a tool that's used to fetch articles. Using the context from the
+        global memory pool and relevant passages, come up with search queries and have them
+        in a list format. For example (seach term 1, search term 2)
+        """,
+            tools = [self.get_articles_by_query]
         )
 
         # Live Session Agent
@@ -149,21 +145,35 @@ class persona_rag:
         self.doc_rank_agent = Agent(
             name="Contextual Retrieval Agent",
             instructions="""
-        You are a search technology expert guiding the Contextual Retrieval Agent
-        that performs context-aware document ranking.
+        You are a Contextual Retrieval Agent.
 
-        Using the global memory pool and the retrieved passages, identify strategies
-        to refine document retrieval.
+        You use the user's query, global memory pool, and retrieved passages to create a refined search query.
 
-        Highlight how user preferences, immediate needs, and global insights can be
-        leveraged to adjust search queries and prioritize results that align with
-        the user's interests (both historical and current).
+        You have access to:
+        get_articles_by_query(query, k)
 
-        Ensure the Contextual Retrieval Agent uses this shared information to
-        deliver more relevant and valuable results.
+        Workflow:
+        1. Understand the user's immediate information need.
+        2. Use relevant memory/passage context to refine the search query.
+        3. Ignore unrelated memory or irrelevant passages.
+        4. Call get_articles_by_query(query, k) using the best refined query.
+        5. Rank only articles returned by the tool.
+        6. Return only valid JSON in the required article-ranking format.
 
-        In your responses, just show the json without the json declaration and
-        without any extra text.
+        Tool rules:
+        - Call get_articles_by_query exactly once unless the user query is empty or impossible to interpret.
+        - Use k = 5 unless another value is provided.
+        - Do not invent article IDs.
+        - Only use article IDs from returned tool results.
+        - If no relevant articles are found, return [].
+
+        Final output format:
+        [
+        {
+            "Article_ID": "<id here>",
+            "Brief_Summary": "<summary here>"
+        }
+        ]
         """
         )
 
@@ -261,7 +271,7 @@ class persona_rag:
 
             text_list_raw = []
 
-            print("THE DATAFRAME WE JUST GOT", df)
+            #print("THE DATAFRAME WE JUST GOT", df)
             #text_list = dict(df)
             text_list = []
             for i in df:
@@ -278,6 +288,9 @@ class persona_rag:
            
     
     def json_to_list(self, json_string):
+
+        if json_string == "" or json_string == None or json_string == "[]":
+            return None
         
         try:
             print("json string passed in ", json_string)
@@ -291,7 +304,10 @@ class persona_rag:
             print(f"Could not properly parse articles, error {e}. Trying to correct the format...")
             # try removing the declaration headers, GPT normally generates
 
-            reformatted_output = Runner.run_sync(self.string_format_agent, f"Fix the following json here - {json_string}. Your response should just be a json. Do **not** include any extra keys, explanations or text outside the JSON. The format must be [{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}]. Start the entire message with \"[\".").final_output
+            reformatted_output = Runner.run_sync(self.string_format_agent, f"""Fix the following json here - {json_string}. Your response should just be a json. 
+                                                 Do **not** include any extra keys, explanations or text outside the JSON. The format must be [{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}]. 
+                                                 If there are no article IDs found, just give []. Please DO NOT make up article numbers if none are existent.
+                                                 Start the entire message with \"[\".""").final_output
 
             try:
                 stripped_headers_beg = re.sub("```json", "", reformatted_output)
@@ -331,6 +347,23 @@ class persona_rag:
 
                 print(f"ID {l} was NOT found.")
         return return_vals, raw_articles
+    
+    def get_articles_by_query(self, query, k):
+
+        """
+        Returns a k-length dict containing article IDs and articles based on query.
+
+        Args:
+            query: Search terms (string list)
+            num_results: Number of results to fetch (default to 5)
+        """
+        print("GET ARTICLES BY QUERY IS RUNNING", query)
+
+        indexes = self.doc_retriever.embed_query(query, k)
+        print("INDEXES FROM TOOL CALL", indexes)
+        article_id_map, _ =  self.get_articles_by_index(indexes)
+        return article_id_map
+
 
     def update_glob_mem_state(self, query):
         glob_memory_state = Runner.run_sync(self.glob_message_pool, query).final_output
@@ -368,13 +401,25 @@ class persona_rag:
         feedback_output = Runner.run_sync(self.feedback_agent_agent, query).final_output
         return feedback_output
     
+    def print_debug(self, title, heading):
+        print("---------------")
+        print(title)
+        print(heading)
+        print("---------------")
+
+    
 
     def analyze_gmp(self, gm1, gm2, prev_instructions):
-        global_memory_analyzation = Runner.run_sync(self.gmp_analyst, f"Analyze the change between the old global message pool {gm1} and the new global message pool {gm2}. Look for any clues where the users's interests evolve as stated in the system instructions and suggests changes in maintaining coherency. If the analyzation was run previously, analyze how the global message pool was previously improved given these instructions {prev_instructions} and suggest changes to ensure consistency.").final_output
+        global_memory_analyzation = Runner.run_sync(self.gmp_analyst, f"""Analyze the change between the old global message pool {gm1} 
+                                                    nd the new global message pool {gm2}. Look for any clues where the users's interests 
+                                                    evolve as stated in the system instructions and suggests changes in maintaining coherency. 
+                                                    If the analyzation was run previously, analyze how the global message pool was previously 
+                                                    improved given these instructions {prev_instructions} and suggest changes to ensure consistency.""").final_output
         return global_memory_analyzation
 
 
     def ask_question(self, query):
+        self.print_debug("query", query)
         
         beginning_gmp = self.global_message_pool
         
@@ -382,18 +427,19 @@ class persona_rag:
         indexes_for_retrieval = self.doc_retriever.embed_query(query, 3)
 
         articles, raw_articles = self.retrieve_articles(indexes_for_retrieval)
-        print("ARTICLES WITH ID", articles)
-        print("\n\n RAW ARTICLES", raw_articles)
+        #print("ARTICLES WITH ID", articles)
+        #print("\n\n RAW ARTICLES", raw_articles)
         #articles with ID | just the articles in the form of a list.
 
         self.global_message_pool["Query"] = query
-        #self.global_message_pool["Passages"] = articles
+        self.global_message_pool["Passages"] = articles
             
         #str_glob_mess_pool = str(global_message_pool)
 
 
         # Update the user profile (New proposal: For this agent to give suggestions.) -- No Passages
         profile_agent_output = self.update_user_profile(build_update_user_profile_prompt(self.global_message_pool["Global Memory"])) #need query here
+        self.print_debug("first user profile update", profile_agent_output)
 
 
         # then pipe into the global message pool updating it. -- No Passages
@@ -406,16 +452,15 @@ class persona_rag:
         # With the articles given priortize the most relevant articles
         
         # -- Proposal to remove this agent call to cut down api calls and reduce response time. With only n=3, this becomes redundant.
-        #cont_retr_output = self.get_cont_retr_docs(f"As said in the instructions above, prioritize the most relevant articles given in the \"Passages\" field in here: {str(self.global_message_pool)}. In your responses, just show the json without the json declaration and do NOT show include any extra keys, explanations or text outside the json. Start the entire message with \"[\".[{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}]")
-        #print("agent's article output", cont_retr_output)
-        # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text.
-        #print(cont_retr_output)
-        #cont_retr_article_list = self.json_to_list(cont_retr_output)
+        cont_retr_prompt = build_cont_retr_prompt(query, self.global_message_pool)
+        cont_retr_output = self.get_cont_retr_docs(cont_retr_prompt)
+        self.print_debug("context retrieval output", cont_retr_output)
+        # tell the agent to give the passage IDs only so it doesnt need to output the entire wikipedia text. It seems to be relating back to the past 10 passages in which the most recently retrieved have NOTHING to do with the query,
+        cont_retr_article_list = self.json_to_list(cont_retr_output)
 
-
-        #cont_retr_articles, raw_articles = self.retrieve_articles(cont_retr_article_list)
-        #self.global_message_pool["Passages"] = cont_retr_articles
-        #print(cont_retr_articles)
+        # self. retrieve articles is what the agent can use instead, so nothing is deterministic.
+        cont_retr_articles, raw_articles = self.retrieve_articles(cont_retr_article_list)
+        self.global_message_pool["Passages"] = cont_retr_articles
 
         
 
@@ -429,7 +474,7 @@ class persona_rag:
                 articles
             )
         )
-        print(lve_ses_suggestions)
+        self.print_debug("live session agent suggestions", lve_ses_suggestions)
 
 
         update_user_suggested_topics = self.update_user_profile(
@@ -438,7 +483,7 @@ class persona_rag:
                 lve_ses_suggestions
             )
         )
-        print(update_user_suggested_topics)
+        self.print_debug("updated user suggested topics", update_user_suggested_topics)
         
 
         glob_memory_state = self.update_glob_mem_state(
@@ -450,16 +495,16 @@ class persona_rag:
             )
         )
         #print(" #### glob memory state after live suggestions ####\n", glob_memory_state)
-        print(glob_memory_state)
         self.global_message_pool["Global Memory"] = glob_memory_state
         # update the user profile from the live sess agent
 
         
 
         past_10_query_articles = str(self.global_message_pool["Past 10 Passages"])
-
+        
+        
         # Re-rank the articles. Include the past articles if they are relevant.
-        ranked_article_output = self.get_cont_retr_docs(
+        ranked_article_output = self.rank_docs(
             build_rank_articles_prompt(
                 query,
                 articles,
@@ -467,7 +512,21 @@ class persona_rag:
                 self.global_message_pool
             )
         )
-        print("RERANKED ARTICLE RESULTS", ranked_article_output)   
+        self.print_debug("ranked article result", ranked_article_output)
+        
+        
+        
+
+        #ranked_article_output = self.rank_docs(f""""Rerank the documents in the current field \"passages\". Included are articles 
+        #                                       that were ranked from the past 10 queries. Past articles from last 10 queries: {past_10_query_articles}\". 
+        #                                       \n\n Be sure to include insights from the live session agent: {lve_ses_suggestions}. \n\n If any entries 
+        #                                       from article corpus from the past 10 queries are highly relevant, \
+        #                                        include them in the ranking. {self.global_message_pool}. In your responses, just show the json without 
+        #                                       the json declaration and do NOT show include any extra keys, explanations or text outside the json. Start 
+        #                                       the entire message with \"[\". [{{\"Article_ID\": \"<id here>\", \"Brief_Summary\": \"<summary here>\"}}].""")
+        
+        
+ 
         # merge this into one agent. Maybe include passages for agents calls if it is absolutely needed, otherwise its not.
         
 
@@ -483,7 +542,7 @@ class persona_rag:
         
         cot_prompt = build_cot_prompt(query, retr_ranked_articles)
         cot_answer = self.cot(cot_prompt)
-        #print(cot_answer)
+        self.print_debug("cot answer", cot_answer)
 
         
 
@@ -497,6 +556,7 @@ class persona_rag:
         )
 
         final_answer = self.final_cog_output(cognitive_agent_prompt)
+        self.print_debug("final answre", final_answer)
 
         
 
@@ -548,7 +608,7 @@ class persona_rag:
     
 
 def main():
-
+    
     llm_judge = ChatOpenAI(model="gpt-4o")
 
     correctness_measurement = []
@@ -561,11 +621,11 @@ def main():
 
     qa_set = []
 
-    limit = 545
+    limit = 3
     i = 0
 
     
-    dataset_1 = pd.read_csv("custom_test.csv", sep = ",")
+    dataset_1 = pd.read_csv("custom_test_4.csv", sep = ",")
     
 
 
@@ -575,7 +635,7 @@ def main():
     for entry in dataset_1.iterrows():
         #query = entry["question"]
         #reference = entry["answers"]
-
+        print("start ---------------------------------------------")
         # This is for the custom transit-related dataset
         query = (entry[1]["query"])
         reference = entry[1]["correct_answers"]
@@ -584,6 +644,8 @@ def main():
 
         try:
             answer, context_articles = agent.ask_question(query)
+            print("THIS IS THE ANSWER", answer)
+            print("CONTEXT ARTICLES", context_articles)
         except openai.RateLimitError as e:
             print(f"error trying to query {e}, skipping to next")
             i += 1
@@ -621,7 +683,7 @@ def main():
         qa_set.append(qa)
 
         i += 1
-        print("Progress i", i)
+        print("----------------------------------------------Progress i", i)
         if i >= limit:
             break
 
@@ -636,11 +698,19 @@ def main():
 
     results_df = result.to_pandas()
 
-    results_df.to_csv('results4.csv', index = False)
+    results_df.to_csv('results12.csv', index = False)
 
     print(results_df.head())
 
     results_df
+
+    
+    
+    #agent = persona_rag()
+    #i = input("Query \n")
+    #answers, articles = agent.ask_question(i)
+    #print(answers)
+
 
 if __name__ == "__main__":
     main()
