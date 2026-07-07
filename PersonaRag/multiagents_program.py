@@ -9,7 +9,7 @@ https://docs.ragas.io/en/stable/
 Sam Bhagwhat - Principles of Building AI Agents
 https://arxiv.org/abs/2407.09394
 """
-from agents import Agent, Runner
+from agents import Agent, Runner, function_tool
 from openai import OpenAI
 import openai
 from document_retrieval import k_doc_retriever
@@ -49,6 +49,8 @@ class persona_rag:
 
         client = OpenAI()
 
+        self.tools = self.get_agent_tools()
+
         self.wiki_text_db = duckdb.connect("wiki_chunked.duckdb")
 
         # initialize the vector db of articles.
@@ -63,6 +65,7 @@ class persona_rag:
         self.global_message_pool["Past 10 Passages"] = [] # a queue of dicts tracks the past number passages. Apended by the document ranking agent.
         # structure: [{P1: a brief summary, P2: a brief summary}]
         # if the live session agent is taken into consideration, then there would more profound information of knowing which documents are ACTUALLY relevant
+        self.global_message_pool["Past 5 Queries"] = []
 
 
         # Serves as a hub for interagent communication
@@ -103,24 +106,40 @@ class persona_rag:
         self.cont_retr_agent = Agent(
             name="Contextual Retrieval Agent",
             instructions="""
-        You are a search technology expert guiding the Contextual Retrieval Agent
-        to deliver context-aware document retrieval.
+        You are a Search Technology Expert.
 
-        Using the global memory pool and the retrieved passages, identify strategies
-        to refine document retrieval.
+        You use the user's query, global memory pool, and retrieved passages to create a refined search query.
 
-        Highlight how user preferences, immediate needs, and global insights can be
-        leveraged to adjust search queries and prioritize results that align with
-        the user's interests.
+        You have access to:
+        get_articles_by_query(query, k)
 
-        Ensure the Contextual Retrieval Agent uses this shared information to
-        deliver more relevant and valuable results.
+        Workflow:
+        1. Understand the user's immediate information need.
+        2. Use relevant memory/passage context to refine the search query.
+        3. Ignore unrelated memory or irrelevant passages.
+        4. Call get_articles_by_query(query, k) by passing in a sentence or query that reflects the intent the user is asking. Please do not change up meaning.
+        5. Rank articles that are defined in the tool and that were passed in.
+        6. If none of the articles are relevant, then call get_articles_by_query(query, k) again with a differently worded query. Then rank articles again repeating step 5.
+        7. Return only valid JSON in the required article-ranking format.
 
-        You will be given a tool that's used to fetch articles. Using the context from the
-        global memory pool and relevant passages, come up with search queries and have them
-        in a list format. For example (seach term 1, search term 2)
+        Tool rules:
+        - Call get_articles_by_query unless the user query is empty or impossible to interpret.
+        - If none of the articles from the initial call are relevant, do a second call on get_articles_by_query while changing up the query.
+        - Use k = 5 unless another value is provided.
+        - When the user query is in form of a question, keep your query in form of a question. When the user query is in in form of a sentence, then keep in form of a sentence. 
+        - Do not invent article IDs.
+        - Only use article IDs from returned tool results.
+        - If no relevant articles are found after you did multiple call to get_articles_by_query, return [].
+
+        Final output format:
+        [
+        {
+            "Article_ID": "<id here>",
+            "Brief_Summary": "<summary here>"
+        }
+        ]
         """,
-            tools = [self.get_articles_by_query]
+            tools = self.tools
         )
 
         # Live Session Agent
@@ -143,37 +162,15 @@ class persona_rag:
 
         # Document Ranking Agent (renamed but same structure)
         self.doc_rank_agent = Agent(
-            name="Contextual Retrieval Agent",
+            name="Document Ranking Agent",
             instructions="""
-        You are a Contextual Retrieval Agent.
-
-        You use the user's query, global memory pool, and retrieved passages to create a refined search query.
-
-        You have access to:
-        get_articles_by_query(query, k)
-
-        Workflow:
-        1. Understand the user's immediate information need.
-        2. Use relevant memory/passage context to refine the search query.
-        3. Ignore unrelated memory or irrelevant passages.
-        4. Call get_articles_by_query(query, k) using the best refined query.
-        5. Rank only articles returned by the tool.
-        6. Return only valid JSON in the required article-ranking format.
-
-        Tool rules:
-        - Call get_articles_by_query exactly once unless the user query is empty or impossible to interpret.
-        - Use k = 5 unless another value is provided.
-        - Do not invent article IDs.
-        - Only use article IDs from returned tool results.
-        - If no relevant articles are found, return [].
-
-        Final output format:
-        [
-        {
-            "Article_ID": "<id here>",
-            "Brief_Summary": "<summary here>"
-        }
-        ]
+        Your task is to help the prioritize documents for better ranking. Analyze the retrieved 
+        passages and global memory pool to identify ways to rank documents effectively. Focus on 
+        combining historical user preferences, immediate needs, and session behavior to refine ranking 
+        algorithms. Your insights should ensure that documents presented by the Document Ranking Agent are 
+        prioritized to match user interests and search context. In your responses, just show the json without 
+        the json declaration and without any extra text. 
+        
         """
         )
 
@@ -253,7 +250,7 @@ class persona_rag:
 
         self.gmp_analyst_instructions = ""
 
-    def retrieve_articles(self, indexes):
+    def retrieve_articles(self, indexes: list[int]):
 
         #text_splitter = RecursiveCharacterTextSplitter(chunk_size = 400, chunk_overlap=0)
 
@@ -361,8 +358,38 @@ class persona_rag:
 
         indexes = self.doc_retriever.embed_query(query, k)
         print("INDEXES FROM TOOL CALL", indexes)
-        article_id_map, _ =  self.get_articles_by_index(indexes)
+        article_id_map, _ =  self.retrieve_articles(indexes)
+        print(article_id_map)
         return article_id_map
+    
+    def get_articles_by_query_2(self, query, k):
+
+        """
+        Returns a k-length dict containing article IDs and articles based on query.
+
+        Args:
+            query: Search terms (string list)
+            num_results: Number of results to fetch (default to 5)
+        """
+        print("GET ARTICLES BY QUERY IS RUNNING", query)
+
+        indexes = self.doc_retriever.embed_query(query, k)
+        print("INDEXES FROM TOOL CALL", indexes)
+        article_id_map, _ =  self.retrieve_articles(indexes)
+        return article_id_map
+    
+    def get_agent_tools(self):
+        @function_tool("search articles")
+        def get_articles_by_query_tool(query: str, k: int):
+            """
+            Returns a k-length dict containing article IDs and articles based on query.
+
+            Args:
+                query: Search terms (string list)
+                num_results: Number of results to fetch (default to 5)
+            """
+            return self.get_articles_by_query(query, k) 
+        return [get_articles_by_query_tool]
 
 
     def update_glob_mem_state(self, query):
@@ -373,7 +400,7 @@ class persona_rag:
 
     
     def get_cont_retr_docs(self, query):
-        doc_output_list = Runner.run_sync(self.doc_rank_agent, query).final_output
+        doc_output_list = Runner.run_sync(self.cont_retr_agent, query).final_output
         return doc_output_list
     
     def get_live_sess_sugg(self, query):
@@ -432,6 +459,9 @@ class persona_rag:
         #articles with ID | just the articles in the form of a list.
 
         self.global_message_pool["Query"] = query
+        self.global_message_pool["Past 5 Queries"].append(query)
+        if len(self.global_message_pool["Past 5 Queries"]) > 5:
+            self.global_message_pool["Past 5 Queries"].pop(0)
         self.global_message_pool["Passages"] = articles
             
         #str_glob_mess_pool = str(global_message_pool)
@@ -501,8 +531,9 @@ class persona_rag:
         
 
         past_10_query_articles = str(self.global_message_pool["Past 10 Passages"])
-        
-        
+        print("BEFORE DOCUMENT RANK AGENT")
+        print(past_10_query_articles)
+        print(articles)
         # Re-rank the articles. Include the past articles if they are relevant.
         ranked_article_output = self.rank_docs(
             build_rank_articles_prompt(
@@ -608,6 +639,10 @@ class persona_rag:
     
 
 def main():
+
+
+
+    
     
     llm_judge = ChatOpenAI(model="gpt-4o")
 
@@ -621,7 +656,7 @@ def main():
 
     qa_set = []
 
-    limit = 3
+    limit = 20
     i = 0
 
     
@@ -710,6 +745,10 @@ def main():
     #i = input("Query \n")
     #answers, articles = agent.ask_question(i)
     #print(answers)
+
+    
+
+
 
 
 if __name__ == "__main__":
