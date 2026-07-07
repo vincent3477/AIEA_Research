@@ -10,14 +10,15 @@ Passages:
 2. Write reading notes summarizing the key points from these passages.
 3. Discuss the relevance of the given question and passages.
 4. If some passages are relevant, provide a brief answer based on them.
-5. If and only if no passage is relevant at all, state:
+5. Please do not lose any relevant information from any articles in your responses.
+6. If and only if no passage is relevant at all, state:
    "no answer found"
 """
 
 
 def build_cognitive_agent_prompt(query, cot_answer, global_message_pool):
     return f"""
-Verify the reasoning process in the initial response:
+Verify the reasoning process in the initial chain of thought response:
 "{cot_answer}"
 
 Check for errors or misalignments to the query:
@@ -30,12 +31,12 @@ Use insights from user interaction analysis:
 "{str(global_message_pool)}"
 
 Refine the response by:
-- correcting inaccuracies
 - enhancing answers based on the user profile
 - aligning with immediate user needs
-- incorporating foundational or advanced knowledge
 
-Be sure to:
+Rules:
 - mirror the user's tone based on the query
-- NOT restate instructions
+- Your final response must be based on the article-supported response from the chain of thought response. No other foundation or parametric knowledge may be added.
+- Please do NOT restate instructions or state your thought process. Your answer should be final, naturally answering the query and the user's needs. Make sure your answer mirrors the user's word and slang usage"
 """
+
