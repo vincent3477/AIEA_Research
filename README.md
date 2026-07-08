@@ -9,9 +9,9 @@ The main purpose of this project is to enable anyone to evaluate different RAG a
 ## How to use:
 1. Make a virtual environment and activate it.
 2. Install all libraries as listed in requirements.txt. 
-3. You can either evaluate the performance of the pipeline or use it as a chatbot.\n
-    \t a. To run as chatbot: `Python3 query_model.py --verbose`
-    \t b. To evaluate: `Python3 evaluate_agent.py --limit 3 --output_file_name output_name --dataset dataset_name`
+3. You can either evaluate the performance of the pipeline or use it as a chatbot.  
+    a. To run as chatbot: `Python3 query_model.py --verbose`.  
+    b. To evaluate: `Python3 evaluate_agent.py --limit 3 --output_file_name output_name --dataset dataset_name`
 
 
 ## How this pipeline was evaluated
