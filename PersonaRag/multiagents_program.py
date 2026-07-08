@@ -67,7 +67,7 @@ class persona_rag:
 
 
         # Serves as a hub for interagent communication
-        self.glob_message_pool = Agent(
+        self.glob_message_pool_agent = Agent(
             name="Global Message Pool",
             instructions=f"""
         You are responsible for maintaining and enriching the Global Message Pool,
@@ -373,7 +373,7 @@ class persona_rag:
 
 
     def update_glob_mem_state(self, query):
-        glob_memory_state = Runner.run_sync(self.glob_message_pool, query).final_output
+        glob_memory_state = Runner.run_sync(self.glob_message_pool_agent, query).final_output
         # Update the global message Pool
         # self.global_message_pool["Global Memory"] = glob_memory_state
         return glob_memory_state
@@ -470,7 +470,7 @@ class persona_rag:
         
 
 
-        #new_gmp = Runner.run_sync(glob_message_pool, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\"  field with new information from the context retrieval agent {cont_retr_output}").final_output
+        #new_gmp = Runner.run_sync(glob_message_pool_agent, f"Update the global message pool (here {new_gmp}) by modifying the \"passages\"  field with new information from the context retrieval agent {cont_retr_output}").final_output
 
 
         lve_ses_suggestions = self.get_live_sess_sugg(
